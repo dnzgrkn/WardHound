@@ -1,0 +1,2 @@
+"""WardHound application package."""
+
