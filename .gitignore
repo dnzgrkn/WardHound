@@ -20,3 +20,9 @@ build/
 .idea/
 .vscode/
 docker-compose.override.yml
+
+# Agent instruction/prompt files — kept locally so Claude Code/Codex still
+# read them each session, but not published in the public repo.
+CLAUDE.md
+AGENTS.md
+prompts/
