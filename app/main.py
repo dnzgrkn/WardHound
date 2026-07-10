@@ -18,7 +18,7 @@ class Services:
     """Long-lived external service clients."""
 
     database: AsyncEngine
-    redis: Redis[str]
+    redis: Redis
 
 
 def _cors_origins() -> list[str]:
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "postgresql+asyncpg://wardhound:wardhound@localhost:5432/wardhound",
         )
     )
-    redis: Redis[str] = Redis.from_url(
+    redis: Redis = Redis.from_url(
         os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
     )
     app.state.services = Services(database=database, redis=redis)

@@ -16,7 +16,7 @@ class ServiceContainer(Protocol):
     """Resources required by health probes."""
 
     database: AsyncEngine
-    redis: Redis[str]
+    redis: Redis
 
 
 class HealthResponse(BaseModel):
