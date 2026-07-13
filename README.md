@@ -4,7 +4,8 @@
 
 AI-powered Security Event Correlation, Root Cause Analysis, and Response Orchestration platform for enterprise infrastructure — NAC, PAM, Active Directory, and firewall event sources.
 
-> Status: Week 1 — bootstrapping. Not yet functional.
+> Status: Active MVP — collectors, correlation, policy/risk scoring, structured AI analysis,
+> simulated response approvals, API, and dashboard are implemented.
 
 ## What this is
 
@@ -42,11 +43,32 @@ Python 3.12 · FastAPI · Pydantic v2 · SQLAlchemy · PostgreSQL · Redis · Ce
 
 ## Getting started
 
+Copy `.env.example` to `.env`, replace the placeholder passwords and dashboard API key, then start
+the full stack:
+
 ```bash
 docker compose up --build
 ```
 
-(Not yet functional — bootstrapping in progress.)
+The FastAPI service is available at `http://localhost:8000`; the dashboard is available at
+`http://localhost:3000`. The dashboard includes a **Load demo** control that submits a fully
+synthetic NAC/identity/PAM evidence chain through the real correlation pipeline.
+
+### Frontend development
+
+The React frontend is an independent Vite package. Copy `frontend/.env.example` to
+`frontend/.env.local` and use the same API key configured for the backend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend quality commands are `npm run lint`, `npm run typecheck`, `npm run test:run`, and
+`npm run build`. The development server runs on port 3000 and talks directly to the API and
+WebSocket endpoints configured through `VITE_API_BASE_URL`, `VITE_WS_BASE_URL`, and
+`VITE_API_KEY`.
 
 ## A note on validation
 
