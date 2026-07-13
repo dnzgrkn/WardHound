@@ -45,7 +45,7 @@ constructing an engine with a fake, and running the entire test suite require no
 
 ### Model and cost controls
 
-The model comes from `WARDHOUND_ANALYSIS_MODEL`, with `claude-sonnet-4-6` as the documented default.
+The model comes from `WARDHOUND_ANALYSIS_MODEL`, with `claude-sonnet-5` as the documented default.
 Sonnet is the default because analysis needs reliable multi-source reasoning while remaining more
 cost-conscious than selecting the most capable model unconditionally. Operators can change the
 model without a code release when availability, quality, or pricing changes.

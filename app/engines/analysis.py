@@ -14,7 +14,7 @@ from app.schemas.analysis import RootCauseAnalysis
 from app.schemas.events import NormalizedEvent
 from app.schemas.incidents import Incident
 
-DEFAULT_ANALYSIS_MODEL = "claude-sonnet-4-6"
+DEFAULT_ANALYSIS_MODEL = "claude-sonnet-5"
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_MAX_RETRIES = 2
 
