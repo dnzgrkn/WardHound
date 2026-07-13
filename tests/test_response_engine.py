@@ -48,7 +48,10 @@ def incident_and_evidence() -> tuple[Incident, NormalizedEvent]:
         primary_entity=entities[1],
         related_entities=[entities[0], entities[2]],
         occurred_at=datetime(2026, 7, 13, 10, tzinfo=UTC),
-        extra_attributes={"session_id": "session-synthetic-0042"},
+        # Matches JumpServerCollector._normalize_command's real extra_attributes key
+        # ("session"), not a "session_id" key — the response engine's session lookup
+        # must agree with what the Stage 2 collector actually produces.
+        extra_attributes={"session": "session-synthetic-0042"},
     )
     incident = Incident(
         title="Synthetic privileged session anomaly",

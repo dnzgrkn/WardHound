@@ -8,7 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.schemas.analysis import RecommendedAction, ResponseActionType
-from app.schemas.events import EntityType, NormalizedEvent
+from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
 from app.schemas.incidents import Incident
 from app.schemas.response import (
     ActionAuditRecord,
@@ -321,15 +321,27 @@ class ResponseEngine:
 def action_context_from_incident(
     incident: Incident, evidence: Sequence[NormalizedEvent] = ()
 ) -> ActionContext:
-    """Snapshot incident entities and a JumpServer session ID from its evidence."""
+    """Snapshot incident entities and a JumpServer session ID from its evidence.
+
+    The JumpServer collector (app/collectors/jumpserver.py) does not emit a "session_id"
+    key: session-lifecycle events store the JumpServer session UUID under "id"
+    (JumpServerCollector._normalize_session), while command/anomaly events store it under
+    "session" (JumpServerCollector._normalize_command). Both are checked here, "session"
+    first since a command-triggered anomaly is the more common CLOSE_SESSION trigger.
+    """
     incident_event_ids = frozenset(incident.event_ids)
     session_id: str | None = None
     for event in evidence:
         if event.id not in incident_event_ids:
             continue
-        candidate = event.extra_attributes.get("session_id")
-        if isinstance(candidate, str) and candidate.strip():
-            session_id = candidate.strip()
+        if event.source_system is not SourceSystem.JUMPSERVER:
+            continue
+        for key in ("session", "id"):
+            candidate = event.extra_attributes.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                session_id = candidate.strip()
+                break
+        if session_id:
             break
     return ActionContext(entities=tuple(incident.entities), session_id=session_id)
 
