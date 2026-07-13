@@ -118,6 +118,37 @@ def ingest_one_incident(client: TestClient) -> UUID:
     return UUID(incidents[0]["id"])
 
 
+def test_correlation_spans_separate_ingestion_requests(application: FastAPI) -> None:
+    """A rule's events split across requests must still correlate into one incident.
+
+    Real collectors post events as they occur, not as one bulk batch — this is a regression
+    test for ingest_events() correlating against services.events.get_all() (all retained
+    evidence) rather than only the events attached to the current request.
+    """
+    events = correlated_events()
+    with TestClient(application) as client:
+        first = client.post(
+            "/api/v1/events",
+            headers=HEADERS,
+            json={"events": [event.model_dump(mode="json") for event in events[:2]]},
+        )
+        assert first.status_code == 200
+        assert first.json() == []
+
+        second = client.post(
+            "/api/v1/events",
+            headers=HEADERS,
+            json={"events": [event.model_dump(mode="json") for event in events[2:]]},
+        )
+
+    assert second.status_code == 200
+    incidents = second.json()
+    assert len(incidents) == 1
+    assert {event.id for event in events} == {
+        UUID(event_id) for event_id in incidents[0]["event_ids"]
+    }
+
+
 def test_api_key_is_required(application: FastAPI) -> None:
     with TestClient(application) as client:
         response = client.get("/api/v1/incidents")

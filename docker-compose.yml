@@ -5,6 +5,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://wardhound:wardhound@postgres:5432/wardhound}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      WARDHOUND_API_KEY: ${WARDHOUND_API_KEY:?set WARDHOUND_API_KEY in .env, see .env.example}
     ports:
       - "8000:8000"
     depends_on:

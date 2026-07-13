@@ -22,6 +22,10 @@ class EventStore(Protocol):
         """Return available events in the requested UUID order."""
         ...
 
+    def get_all(self) -> list[NormalizedEvent]:
+        """Return every retained event, so correlation can see prior ingestion calls."""
+        ...
+
 
 class IncidentStore(Protocol):
     """Persistence port for incidents and their optional AI analyses."""
@@ -58,6 +62,9 @@ class InMemoryEventStore:
 
     def get_many(self, event_ids: Sequence[UUID]) -> list[NormalizedEvent]:
         return [self._events[event_id] for event_id in event_ids if event_id in self._events]
+
+    def get_all(self) -> list[NormalizedEvent]:
+        return list(self._events.values())
 
 
 class InMemoryIncidentStore:

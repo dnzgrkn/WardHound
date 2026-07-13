@@ -46,9 +46,17 @@ router = APIRouter(
 
 @router.post("/events", response_model=list[Incident])
 async def ingest_events(batch: EventBatch, services: ApiServicesDependency) -> list[Incident]:
-    """Run already-normalized events through the deterministic incident pipeline."""
+    """Run already-normalized events through the deterministic incident pipeline.
+
+    Correlation runs over every retained event (services.events.get_all()), not just this
+    request's batch. Real collectors post events incrementally as they occur, often on
+    separate requests spread across the correlation window — running the pipeline against
+    only the current batch would mean a rule spanning multiple source systems could never
+    fire outside of a single bulk-loaded request. Incident IDs are deterministic (see
+    CorrelationEngine), so re-evaluating retained history on every call is idempotent.
+    """
     services.events.add_all(batch.events)
-    incidents = run_pipeline(batch.events)
+    incidents = run_pipeline(services.events.get_all())
     for incident in incidents:
         created = services.incidents.upsert(incident)
         await services.connections.broadcast(
