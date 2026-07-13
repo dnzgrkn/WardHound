@@ -56,7 +56,9 @@ instead of provider exceptions or generic 500 responses.
 Action routes load the incident and evidence, use the existing `action_context_from_incident`, and
 delegate requests and decisions to `ResponseEngine`. Its not-found and invalid-transition
 exceptions map to HTTP 404 and 409. The API never changes the response engine's privileged approval
-gate or simulation-only handlers.
+gate or simulation-only handlers. `GET /api/v1/incidents/{incident_id}/actions` exposes the latest
+snapshot of each response request linked to a retained incident, so action state can be restored
+from server-side truth after a refresh or in another operator session.
 
 ### Authentication placeholder
 
@@ -81,10 +83,12 @@ static query key.
 ### Realtime updates
 
 The WebSocket message contract is a Pydantic `RealtimeMessage` with a closed type vocabulary:
-`incident_created`, `incident_updated`, or `action_updated`. Its payload is the corresponding typed
-`Incident` or `ActionAuditRecord`. The ingestion endpoint distinguishes creation from deterministic
-UUID upsert; analysis emits an incident update; action request, approval, and rejection emit action
-updates.
+`incident_created`, `incident_updated`, `analysis_completed`, or `action_updated`. Incident creation
+and deterministic UUID upserts carry an `Incident`; analysis completion carries an
+`AnalysisCompleted` payload containing the incident UUID and retained `RootCauseAnalysis`; action
+request, approval, and rejection carry the latest `ActionAuditRecord`. A dedicated analysis event
+keeps routine incident broadcasts compact while allowing every connected client to update an open
+detail view without refetching it.
 
 `IncidentConnectionManager` retains active WebSocket objects in the application process and sends
 the serialized typed message to each connection. Redis pub/sub is deferred because Stage 6a runs as
@@ -97,7 +101,8 @@ connection manager, with delivery and backpressure behavior defined explicitly.
 Stage 6b can populate and operate the dashboard through a versioned API without live collectors,
 PostgreSQL migrations, Redis messaging, or real remediation integrations. The HTTP layer remains a
 composition boundary over existing typed engines, and tests can replace stores and analysis clients
-without network calls.
+without network calls. Dashboard clients restore current incident action state through the API and
+merge subsequent action and analysis updates from the WebSocket stream.
 
 State and WebSocket reach are process-local, the static key is not user authentication, and list
 operations are in-memory scans. These limitations are acceptable for the current single-operator

@@ -46,11 +46,14 @@ The engine depends on a small synchronous `ApprovalStore` protocol:
 
 - `append(record)` adds an immutable lifecycle snapshot;
 - `get(record_id)` returns the latest snapshot; and
-- `history(record_id)` returns the append-ordered audit history.
+- `history(record_id)` returns the append-ordered audit history; and
+- `list_for_incident(incident_id)` returns the latest snapshot of each request linked to an
+  incident.
 
 The Stage 5 implementation is an in-memory dictionary whose values are snapshot lists. All tests
-use it. A future SQLAlchemy repository can implement the same protocol with an append-only table
-and latest-record query without changing response-engine decisions or handlers. Synchronous methods
+use it. A future SQLAlchemy repository can implement the same protocol with an append-only table,
+latest-record query, and incident-indexed latest-snapshot query without changing response-engine
+decisions or handlers. Synchronous methods
 keep this in-memory engine simple; a future asynchronous API boundary can adapt database calls or
 revise the port when the actual persistence architecture exists.
 
