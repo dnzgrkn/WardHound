@@ -9,9 +9,11 @@ description = "AI-powered enterprise security event correlation and response orc
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.116,<1",
     "asyncpg>=0.30,<1",
     "celery[redis]>=5.4,<6",
     "fastapi>=0.115,<1",
+    "instructor>=1.15,<2",
     "pydantic>=2.10,<3",
     "redis>=5.2,<6",
     "sqlalchemy[asyncio]>=2.0,<3",
