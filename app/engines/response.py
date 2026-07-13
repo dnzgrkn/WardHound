@@ -46,6 +46,10 @@ class ApprovalStore(Protocol):
         """Return every snapshot for a request in append order."""
         ...
 
+    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+        """Return the latest snapshot of every request linked to an incident."""
+        ...
+
 
 class InMemoryApprovalStore:
     """Dict-backed Stage 5 store used in tests and local simulations."""
@@ -62,6 +66,13 @@ class InMemoryApprovalStore:
 
     def history(self, record_id: UUID) -> tuple[ActionAuditRecord, ...]:
         return tuple(self._records.get(record_id, ()))
+
+    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+        return [
+            snapshots[-1]
+            for snapshots in self._records.values()
+            if snapshots and snapshots[-1].incident_id == incident_id
+        ]
 
 
 class SimulatedActionHandler(Protocol):
@@ -251,6 +262,10 @@ class ResponseEngine:
         )
         self.store.append(record)
         return record if needs_approval else self._execute(record)
+
+    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+        """Return current response records associated with an incident."""
+        return self.store.list_for_incident(incident_id)
 
     def approve(self, record_id: UUID, decided_by: str) -> ActionAuditRecord:
         """Approve a pending request and then run its simulated handler."""

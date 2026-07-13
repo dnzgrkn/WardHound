@@ -274,6 +274,78 @@ def test_action_approve_reject_and_error_mapping(application: FastAPI) -> None:
     assert rejected.json()["execution_status"] == "not_executed"
 
 
+def test_incident_actions_list_returns_latest_snapshots(application: FastAPI) -> None:
+    action = {
+        "action_type": "quarantine_device",
+        "rationale": "Contain the synthetic endpoint while an operator reviews evidence.",
+        "requires_approval": True,
+    }
+    second_action = {
+        "action_type": "disable_user",
+        "rationale": "Suspend the synthetic account pending operator review.",
+        "requires_approval": True,
+    }
+    with TestClient(application) as client:
+        missing = client.get(
+            f"/api/v1/incidents/{uuid4()}/actions",
+            headers=HEADERS,
+        )
+        incident_id = ingest_one_incident(client)
+        empty = client.get(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+        )
+        requested = client.post(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+            json=action,
+        )
+        record_id = requested.json()["id"]
+        pending = client.get(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+        )
+        client.post(
+            f"/api/v1/actions/{record_id}/approve",
+            headers=HEADERS,
+            json={"decided_by": "analyst-01"},
+        )
+        approved = client.get(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+        )
+        second_requested = client.post(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+            json=second_action,
+        )
+        second_record_id = second_requested.json()["id"]
+        client.post(
+            f"/api/v1/actions/{second_record_id}/reject",
+            headers=HEADERS,
+            json={"decided_by": "analyst-01", "reason": "Expected synthetic activity."},
+        )
+        final = client.get(
+            f"/api/v1/incidents/{incident_id}/actions",
+            headers=HEADERS,
+        )
+
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "incident_not_found"
+    assert empty.status_code == 200
+    assert empty.json() == []
+    assert pending.json()[0]["approval_status"] == "pending"
+    assert approved.status_code == 200
+    assert len(approved.json()) == 1
+    assert approved.json()[0]["id"] == record_id
+    assert approved.json()[0]["approval_status"] == "approved"
+    assert approved.json()[0]["execution_status"] == "simulated"
+    records_by_id = {record["id"]: record for record in final.json()}
+    assert records_by_id[record_id]["approval_status"] == "approved"
+    assert records_by_id[second_record_id]["approval_status"] == "rejected"
+    assert records_by_id[second_record_id]["execution_status"] == "not_executed"
+
+
 def test_websocket_broadcasts_incident_creation(application: FastAPI) -> None:
     with (
         TestClient(application) as client,
@@ -289,3 +361,22 @@ def test_websocket_broadcasts_incident_creation(application: FastAPI) -> None:
     assert response.status_code == 200
     assert message["type"] == "incident_created"
     assert message["payload"]["id"] == response.json()[0]["id"]
+
+
+def test_websocket_broadcasts_completed_analysis(application: FastAPI) -> None:
+    with (
+        TestClient(application) as client,
+        client.websocket_connect(f"/api/v1/ws/incidents?api_key={API_KEY}") as websocket,
+    ):
+        incident_id = ingest_one_incident(client)
+        websocket.receive_json()
+        response = client.post(
+            f"/api/v1/incidents/{incident_id}/analyze",
+            headers=HEADERS,
+        )
+        message = websocket.receive_json()
+
+    assert response.status_code == 200
+    assert message["type"] == "analysis_completed"
+    assert UUID(message["payload"]["incident_id"]) == incident_id
+    assert message["payload"]["analysis"] == response.json()

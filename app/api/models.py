@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +24,13 @@ class IncidentDetail(BaseModel):
     incident: Incident
     evidence: list[NormalizedEvent]
     analysis: RootCauseAnalysis | None = None
+
+
+class AnalysisCompleted(BaseModel):
+    """Realtime payload emitted after an incident analysis is retained."""
+
+    incident_id: UUID
+    analysis: RootCauseAnalysis
 
 
 class IncidentSortField(StrEnum):
@@ -79,11 +87,12 @@ class RealtimeEventType(StrEnum):
 
     INCIDENT_CREATED = "incident_created"
     INCIDENT_UPDATED = "incident_updated"
+    ANALYSIS_COMPLETED = "analysis_completed"
     ACTION_UPDATED = "action_updated"
 
 
 class RealtimeMessage[PayloadT](BaseModel):
-    """Typed realtime envelope carrying an incident or action audit record."""
+    """Typed realtime envelope carrying one dashboard update payload."""
 
     type: RealtimeEventType
     payload: PayloadT

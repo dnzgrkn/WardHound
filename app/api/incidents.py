@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.auth import require_api_key
 from app.api.models import (
+    AnalysisCompleted,
     ApiError,
     ApprovalDecision,
     EventBatch,
@@ -113,6 +114,20 @@ async def get_incident(
     )
 
 
+@router.get(
+    "/incidents/{incident_id}/actions",
+    response_model=list[ActionAuditRecord],
+    responses={status.HTTP_404_NOT_FOUND: {"model": ApiError}},
+)
+async def list_incident_actions(
+    incident_id: UUID, services: ApiServicesDependency
+) -> list[ActionAuditRecord] | JSONResponse:
+    """Return the latest response snapshot for every action linked to an incident."""
+    if services.incidents.get(incident_id) is None:
+        return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
+    return services.response_engine.list_for_incident(incident_id)
+
+
 @router.post(
     "/incidents/{incident_id}/analyze",
     response_model=RootCauseAnalysis,
@@ -142,9 +157,9 @@ async def analyze_incident(
         return _error(status.HTTP_502_BAD_GATEWAY, "analysis_generation_failed", str(exc))
     services.incidents.save_analysis(incident.id, analysis)
     await services.connections.broadcast(
-        RealtimeMessage[Incident](
-            type=RealtimeEventType.INCIDENT_UPDATED,
-            payload=incident,
+        RealtimeMessage[AnalysisCompleted](
+            type=RealtimeEventType.ANALYSIS_COMPLETED,
+            payload=AnalysisCompleted(incident_id=incident.id, analysis=analysis),
         )
     )
     return analysis
