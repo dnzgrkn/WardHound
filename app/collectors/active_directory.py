@@ -25,6 +25,8 @@ class ActiveDirectoryCollector(BaseCollector):
         return SourceSystem.ACTIVE_DIRECTORY
 
     def parse_raw(self, data: bytes | str | dict[str, Any]) -> RawEvent:
+        # Upstream transports must render each event with .ToXml(); named fields such as
+        # TargetUserName do not exist in Format-List or raw positional .Properties output.
         if not isinstance(data, dict):
             raise ValueError("Active Directory input must be an event object")
         try:
