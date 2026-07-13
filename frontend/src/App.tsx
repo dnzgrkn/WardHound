@@ -8,9 +8,16 @@ import { IncidentTable } from "@/components/incident-table";
 import { SummaryStrip } from "@/components/summary-strip";
 import { Button } from "@/components/ui/button";
 import { apiClient, ApiClientError, type WardHoundApi } from "@/lib/api";
-import { cacheActionRecords, loadActionRecords, upsertActionRecord } from "@/lib/action-cache";
 import { createSyntheticDemoEvents } from "@/lib/demo-events";
-import { applyIncidentMessage, connectRealtime, upsertIncident, type RealtimeConnection } from "@/lib/realtime";
+import {
+  applyAnalysisMessage,
+  applyIncidentMessage,
+  connectRealtime,
+  mergeFetchedActionRecords,
+  upsertActionRecord,
+  upsertIncident,
+  type RealtimeConnection,
+} from "@/lib/realtime";
 import type {
   ActionAuditRecord,
   Incident,
@@ -36,7 +43,7 @@ export function App({ client = apiClient, realtimeConnector = connectRealtime }:
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<IncidentDetail | null>(null);
-  const [actionRecords, setActionRecords] = useState<ActionAuditRecord[]>(loadActionRecords);
+  const [actionRecords, setActionRecords] = useState<ActionAuditRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -46,8 +53,6 @@ export function App({ client = apiClient, realtimeConnector = connectRealtime }:
   const [pageError, setPageError] = useState<string | null>(null);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("connecting");
   const [demoBusy, setDemoBusy] = useState(false);
-
-  useEffect(() => cacheActionRecords(actionRecords), [actionRecords]);
 
   useEffect(() => {
     let active = true;
@@ -64,6 +69,10 @@ export function App({ client = apiClient, realtimeConnector = connectRealtime }:
       setActionRecords((current) => upsertActionRecord(current, message.payload));
       return;
     }
+    if (message.type === "analysis_completed") {
+      setDetail((current) => applyAnalysisMessage(current, message));
+      return;
+    }
     setIncidents((current) => {
       const updated = applyIncidentMessage(current, message);
       return updated.filter((incident) => matchesFilters(incident, filters));
@@ -78,11 +87,19 @@ export function App({ client = apiClient, realtimeConnector = connectRealtime }:
 
   const selectIncident = useCallback((incidentId: string) => {
     setSelectedId(incidentId);
+    setActionRecords([]);
     setDetailLoading(true);
     setAnalysisError(null);
     setActionError(null);
-    void client.getIncident(incidentId)
-      .then((result) => { setDetail(result); setPageError(null); })
+    void Promise.all([
+      client.getIncident(incidentId),
+      client.listIncidentActions(incidentId),
+    ])
+      .then(([result, records]) => {
+        setDetail(result);
+        setActionRecords((current) => mergeFetchedActionRecords(current, records));
+        setPageError(null);
+      })
       .catch((error: unknown) => setPageError(errorMessage(error)))
       .finally(() => setDetailLoading(false));
   }, [client]);

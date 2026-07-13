@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import { App } from "@/App";
 import type { WardHoundApi } from "@/lib/api";
@@ -9,6 +10,7 @@ import { analysis, detail, incident, pendingRecord } from "@/test/fixtures";
 const client: WardHoundApi = {
   listIncidents: () => Promise.resolve([incident]),
   getIncident: () => Promise.resolve(detail),
+  listIncidentActions: () => Promise.resolve([]),
   analyzeIncident: () => Promise.resolve(analysis),
   ingestEvents: () => Promise.resolve([incident]),
   requestAction: () => Promise.resolve(pendingRecord),
@@ -27,5 +29,21 @@ describe("incident dashboard", () => {
     expect(await screen.findByText(incident.title)).toBeInTheDocument();
     expect(screen.getAllByText("76")).not.toHaveLength(0);
     expect(screen.getByText("critical")).toBeInTheDocument();
+  });
+
+  it("loads server-side action history when incident detail opens", async () => {
+    const user = userEvent.setup();
+    const listIncidentActions = vi.fn(() => Promise.resolve([pendingRecord]));
+    render(
+      <App
+        client={{ ...client, listIncidentActions }}
+        realtimeConnector={noRealtime}
+      />,
+    );
+
+    await user.click(await screen.findByText(incident.title));
+
+    expect(await screen.findByText("Awaiting human")).toBeInTheDocument();
+    expect(listIncidentActions).toHaveBeenCalledWith(incident.id);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { applyIncidentMessage } from "@/lib/realtime";
-import { incident } from "@/test/fixtures";
+import { applyAnalysisMessage, applyIncidentMessage } from "@/lib/realtime";
+import { analysis, detail, incident } from "@/test/fixtures";
 
 describe("realtime incident state", () => {
   it("merges an incident update without refetching the queue", () => {
@@ -14,5 +14,22 @@ describe("realtime incident state", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]?.risk_score).toBe(91);
+  });
+
+  it("applies a completed analysis to the open incident detail", () => {
+    const completed = {
+      ...analysis,
+      probable_cause: "A second operator completed the structured analysis.",
+    };
+
+    const result = applyAnalysisMessage(
+      { ...detail, analysis: null },
+      {
+        type: "analysis_completed",
+        payload: { incident_id: incident.id, analysis: completed },
+      },
+    );
+
+    expect(result?.analysis).toEqual(completed);
   });
 });

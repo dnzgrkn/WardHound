@@ -87,6 +87,11 @@ export interface IncidentDetail {
   analysis: RootCauseAnalysis | null;
 }
 
+export interface AnalysisCompleted {
+  incident_id: string;
+  analysis: RootCauseAnalysis;
+}
+
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "auto_approved";
 export type ExecutionStatus = "not_executed" | "simulated" | "failed";
 
@@ -120,6 +125,7 @@ export interface IncidentFilters {
 
 export type RealtimeMessage =
   | { type: "incident_created" | "incident_updated"; payload: Incident }
+  | { type: "analysis_completed"; payload: AnalysisCompleted }
   | { type: "action_updated"; payload: ActionAuditRecord };
 
 export type RealtimeStatus = "connecting" | "live" | "reconnecting" | "offline";

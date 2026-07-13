@@ -28,6 +28,7 @@ export class ApiClientError extends Error {
 export interface WardHoundApi {
   listIncidents(filters: IncidentFilters): Promise<Incident[]>;
   getIncident(incidentId: string): Promise<IncidentDetail>;
+  listIncidentActions(incidentId: string): Promise<ActionAuditRecord[]>;
   analyzeIncident(incidentId: string): Promise<RootCauseAnalysis>;
   ingestEvents(events: NormalizedEvent[]): Promise<Incident[]>;
   requestAction(incidentId: string, action: RecommendedAction): Promise<ActionAuditRecord>;
@@ -61,6 +62,10 @@ export class WardHoundApiClient implements WardHoundApi {
 
   getIncident(incidentId: string): Promise<IncidentDetail> {
     return this.request<IncidentDetail>(`/incidents/${incidentId}`);
+  }
+
+  listIncidentActions(incidentId: string): Promise<ActionAuditRecord[]> {
+    return this.request<ActionAuditRecord[]>(`/incidents/${incidentId}/actions`);
   }
 
   analyzeIncident(incidentId: string): Promise<RootCauseAnalysis> {

@@ -1,4 +1,10 @@
-import type { Incident, RealtimeMessage, RealtimeStatus } from "@/lib/types";
+import type {
+  ActionAuditRecord,
+  Incident,
+  IncidentDetail,
+  RealtimeMessage,
+  RealtimeStatus,
+} from "@/lib/types";
 
 export interface RealtimeConnection {
   close(): void;
@@ -14,9 +20,40 @@ export function applyIncidentMessage(
   incidents: Incident[],
   message: RealtimeMessage,
 ): Incident[] {
-  return message.type === "action_updated"
-    ? incidents
-    : upsertIncident(incidents, message.payload);
+  return message.type === "incident_created" || message.type === "incident_updated"
+    ? upsertIncident(incidents, message.payload)
+    : incidents;
+}
+
+export function applyAnalysisMessage(
+  detail: IncidentDetail | null,
+  message: RealtimeMessage,
+): IncidentDetail | null {
+  if (message.type !== "analysis_completed" || detail?.incident.id !== message.payload.incident_id) {
+    return detail;
+  }
+  return { ...detail, analysis: message.payload.analysis };
+}
+
+export function upsertActionRecord(
+  records: ActionAuditRecord[],
+  incoming: ActionAuditRecord,
+): ActionAuditRecord[] {
+  const exists = records.some((record) => record.id === incoming.id);
+  return exists
+    ? records.map((record) => (record.id === incoming.id ? incoming : record))
+    : [incoming, ...records];
+}
+
+export function mergeFetchedActionRecords(
+  liveRecords: ActionAuditRecord[],
+  fetchedRecords: ActionAuditRecord[],
+): ActionAuditRecord[] {
+  return fetchedRecords.reduce(
+    (records, record) =>
+      records.some((candidate) => candidate.id === record.id) ? records : [...records, record],
+    liveRecords,
+  );
 }
 
 export function connectRealtime(
@@ -78,6 +115,7 @@ function parseRealtimeMessage(value: unknown): RealtimeMessage | null {
     if (
       parsed.type !== "incident_created" &&
       parsed.type !== "incident_updated" &&
+      parsed.type !== "analysis_completed" &&
       parsed.type !== "action_updated"
     ) {
       return null;
