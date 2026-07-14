@@ -2,7 +2,7 @@
 
 ## Context
 
-WardHound was developed with access to event data from a mid-sized enterprise Zero Trust deployment during an internship engagement. The environment used PacketFence for NAC, JumpServer for privileged access, and Active Directory Tiering for identity boundaries. Representative source formats were checked against real events locally; all committed examples, fixtures, and identifiers are synthetic or anonymized.
+WardHound was developed with access to event data from a mid-sized enterprise Zero Trust deployment at Company X. The environment used PacketFence for NAC, JumpServer for privileged access, and Active Directory Tiering for identity boundaries. Representative source formats were checked against real events locally; all committed examples, fixtures, and identifiers are synthetic or anonymized.
 
 This validation established that WardHound's parsers recognize the structures and semantics emitted by those systems. It does not mean that the current repository continuously ingests production traffic: the syslog listener, polling scheduler, and WinRM/WEF transport are not wired as running services.
 

@@ -1,16 +1,16 @@
 # WardHound — Yoğun Build Roadmap
 
-Hazırlanma: 9 Temmuz 2026 | Tempo: 20+ saat/hafta, ama ilerleme takvim haftasına değil aşama tamamlanmasına göre — "Aşama N" başlıkları sabit bir hafta demek değil, sıralı bir iş birimi demek. Hedef: internship bitmeden önce gerçek NAC/PAM/AD trafiğine karşı test edebilecek bir MVP çıkarmak.
+Hazırlanma: 9 Temmuz 2026 | Tempo: 20+ saat/hafta, ama ilerleme takvim haftasına değil aşama tamamlanmasına göre — "Aşama N" başlıkları sabit bir hafta demek değil, sıralı bir iş birimi demek. Hedef: Company X'teki erişim penceresi kapanmadan önce gerçek NAC/PAM/AD trafiğine karşı test edilebilecek bir MVP çıkarmak.
 
 ## Neden sıralamayı değiştiriyoruz
 
-`12_Month_Career_Roadmap.md`'de WardHound Phase 3'te (Ocak–Mart 2027), CCNA ve Network Automation Platform'dan sonra planlanmıştı. Bunu öne çekmenin tek gerçek gerekçesi var ama güçlü bir gerekçe: şu an elinde canlı bir Zero Trust altyapısı (PacketFence, JumpServer, AD Tiering) var ve internship bitince bu erişim kayboluyor. Bir correlation/AI platformunu gerçek event'lere karşı test edebilmek, sentetik veriyle test etmekten kıyaslanamayacak kadar değerli — bu iddiayı portföyde kanıtlanabilir kılan şey de bu. Riski açık söyleyeyim: CCNA'yı erteliyorsun ve bu roadmap'i job-search takvimini birkaç ay kaydırabilir. Kabul edilebilir bir trade-off, çünkü zaman-kısıtlı fırsat (internship erişimi) geri gelmeyecek, sertifika her zaman alınabilir.
+`12_Month_Career_Roadmap.md`'de WardHound Phase 3'te (Ocak–Mart 2027), CCNA ve Network Automation Platform'dan sonra planlanmıştı. Bunu öne çekmenin tek gerçek gerekçesi var ama güçlü bir gerekçe: şu an elinde canlı bir Zero Trust altyapısı (PacketFence, JumpServer, AD Tiering) var ve Company X ile olan görev süresi sona erince bu erişim kayboluyor. Bir correlation/AI platformunu gerçek event'lere karşı test edebilmek, sentetik veriyle test etmekten kıyaslanamayacak kadar değerli — bu iddiayı portföyde kanıtlanabilir kılan şey de bu. Riski açık söyleyeyim: CCNA'yı erteliyorsun ve bu roadmap'i job-search takvimini birkaç ay kaydırabilir. Kabul edilebilir bir trade-off, çünkü zaman-kısıtlı fırsat (Company X erişimi) geri gelmeyecek, sertifika her zaman alınabilir.
 
-**Gizlilik kuralı devam ediyor:** İnternship'teki gerçek hostname/IP/kullanıcı adı/şirket-özel veri asla public repo'ya girmeyecek. Gerçek event'lerle sadece lokal/private test yapılacak; public repo'ya giden her şey (örnek loglar, case study, demo) proje gizlilik kuralına göre anonimleştirilecek — "orta ölçekli bir kurumsal ortam" gibi genellenmiş ifadeler, gerçek RADIUS secret/SNMP community/kullanıcı adı yok.
+**Gizlilik kuralı devam ediyor:** Company X'teki gerçek hostname/IP/kullanıcı adı/şirket-özel veri asla public repo'ya girmeyecek. Gerçek event'lerle sadece lokal/private test yapılacak; public repo'ya giden her şey (örnek loglar, case study, demo) proje gizlilik kuralına göre anonimleştirilecek — "orta ölçekli bir kurumsal ortam" gibi genellenmiş ifadeler, gerçek RADIUS secret/SNMP community/kullanıcı adı yok.
 
 ## Kritik yol riski
 
-Eğer internship'te kalan süre azalırsa, Aşama 1–2 (iskelet + gerçek collector'lar) mutlaka önce bitmeli — geri kalan her şey sentetik veriyle de geliştirilebilir, ama collector'ların gerçek PacketFence/JumpServer/AD event'lerine karşı doğrulanması sadece şimdi mümkün. Erişim penceresi kısalırsa Aşama 1 ve 2'yi birleştirip sıkıştır.
+Eğer Company X ile olan süreçte kalan zaman azalırsa, Aşama 1–2 (iskelet + gerçek collector'lar) mutlaka önce bitmeli — geri kalan her şey sentetik veriyle de geliştirilebilir, ama collector'ların gerçek PacketFence/JumpServer/AD event'lerine karşı doğrulanması sadece şimdi mümkün. Erişim penceresi kısalırsa Aşama 1 ve 2'yi birleştirip sıkıştır.
 
 ---
 
@@ -20,7 +20,7 @@ Docker Compose ile FastAPI + PostgreSQL + Redis + Celery worker iskeleti. Pydant
 
 ## Aşama 2 — Gerçek Collector'lar (en yüksek öncelik) ✅ tamamlandı
 
-PacketFence syslog collector (UDP/TCP listener, RFC5424 parse), JumpServer collector (REST API polling — session start/end, privileged command, abnormal session), AD collector (Windows Event Forwarding veya WinRM üzerinden Security log okuma — 4625 failed auth, 4740 lockout, 4728 group membership change). Her biri normalization layer'dan geçip `NormalizedEvent` olarak Postgres'e yazılıyor. Bu aşama internship ortamına karşı gerçek doğrulama yapılacak aşama — mümkünse burayı geciktirme.
+PacketFence syslog collector (UDP/TCP listener, RFC5424 parse), JumpServer collector (REST API polling — session start/end, privileged command, abnormal session), AD collector (Windows Event Forwarding veya WinRM üzerinden Security log okuma — 4625 failed auth, 4740 lockout, 4728 group membership change). Her biri normalization layer'dan geçip `NormalizedEvent` olarak Postgres'e yazılıyor. Bu aşama Company X ortamına karşı gerçek doğrulama yapılacak aşama — mümkünse burayı geciktirme.
 
 ## Aşama 3 — Correlation + Policy + Risk Engine ✅ tamamlandı
 
