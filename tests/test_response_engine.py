@@ -8,6 +8,7 @@ from ldap3 import MOCK_SYNC, Connection, Server
 
 import app.engines.response as response_module
 from app.engines.response import (
+    BlockIpHandler,
     DisableUserHandler,
     InMemoryApprovalStore,
     QuarantineDeviceHandler,
@@ -20,6 +21,7 @@ from app.integrations.active_directory import (
     ActiveDirectoryError,
     DisableAccountResult,
 )
+from app.integrations.firepower import BlockIpResult, FirepowerError
 from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import (
@@ -78,6 +80,30 @@ class StubActiveDirectoryClient:
         if self.error is not None:
             raise self.error
         return DisableAccountResult(already_disabled=False)
+
+
+class StubFirepowerClient:
+    calls: list[tuple[str, str]] = []
+    error: FirepowerError | None = None
+
+    def __init__(self, base_url: str, username: str, password: str) -> None:
+        assert base_url == "https://fmc.corp.example.com"
+        assert username == "synthetic-api-user"
+        assert password == "synthetic-api-password"
+
+    async def __aenter__(self) -> StubFirepowerClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def add_blocklist_member(
+        self, network_group_id: str, target_ip: str
+    ) -> BlockIpResult:
+        self.calls.append((network_group_id, target_ip))
+        if self.error is not None:
+            raise self.error
+        return BlockIpResult(already_blocked=False)
 
 
 BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
@@ -502,3 +528,83 @@ async def test_active_directory_real_audit_uses_confirmed_mock_directory_state(
     assert record.result.details["mode"] == "real"
     assert record.result.details["disable_confirmed"] is True
     assert int(connection.strategy.entries[user_dn]["userAccountControl"][0]) & AD_ACCOUNTDISABLE
+
+
+@pytest.mark.parametrize(
+    "missing_variable",
+    [
+        "FMC_BASE_URL",
+        "FMC_USERNAME",
+        "FMC_PASSWORD",
+        "FMC_BLOCKLIST_NETWORK_GROUP_ID",
+        "FMC_REAL_EXECUTION",
+        None,
+    ],
+)
+async def test_fmc_execution_gate_requires_all_five_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_variable: str | None,
+) -> None:
+    monkeypatch.setattr(response_module, "FirepowerClient", StubFirepowerClient)
+    configuration = {
+        "FMC_BASE_URL": "https://fmc.corp.example.com",
+        "FMC_USERNAME": "synthetic-api-user",
+        "FMC_PASSWORD": "synthetic-api-password",
+        "FMC_BLOCKLIST_NETWORK_GROUP_ID": "group-synthetic-0042",
+        "FMC_REAL_EXECUTION": "true",
+    }
+    for name, value in configuration.items():
+        monkeypatch.setenv(name, value)
+    if missing_variable is not None:
+        if missing_variable == "FMC_REAL_EXECUTION":
+            monkeypatch.setenv(missing_variable, "false")
+        else:
+            monkeypatch.delenv(missing_variable)
+    StubFirepowerClient.calls = []
+    StubFirepowerClient.error = None
+    incident, event = incident_and_evidence()
+
+    result = await BlockIpHandler().simulate(
+        action(ResponseActionType.BLOCK_IP, requires_approval=True),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    expected_mode = "real" if missing_variable is None else "simulation"
+    assert result.details["mode"] == expected_mode
+    assert StubFirepowerClient.calls == (
+        [("group-synthetic-0042", "10.20.30.40")] if expected_mode == "real" else []
+    )
+    if expected_mode == "real":
+        assert result.details["operation"] == "add_blocklist_member"
+        assert result.details["membership_confirmed"] is True
+        assert result.details["enforcement_pending_deploy"] is True
+
+
+async def test_fmc_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "FirepowerClient", StubFirepowerClient)
+    monkeypatch.setenv("FMC_BASE_URL", "https://fmc.corp.example.com")
+    monkeypatch.setenv("FMC_USERNAME", "synthetic-api-user")
+    monkeypatch.setenv("FMC_PASSWORD", "synthetic-api-password")
+    monkeypatch.setenv("FMC_BLOCKLIST_NETWORK_GROUP_ID", "group-synthetic-0042")
+    monkeypatch.setenv("FMC_REAL_EXECUTION", "true")
+    StubFirepowerClient.calls = []
+    StubFirepowerClient.error = FirepowerError(
+        "FMC network-group update returned HTTP 422", status_code=422
+    )
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.BLOCK_IP, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["status_code"] == 422
