@@ -1,12 +1,14 @@
-"""Human-gated response workflow with simulated action handlers only."""
+"""Human-gated response workflow with safe-by-default action handlers."""
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from app.integrations.packetfence import PacketFenceClient, PacketFenceError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
 from app.schemas.incidents import Incident
@@ -29,6 +31,14 @@ class InvalidActionTransitionError(ValueError):
 
 class SimulationTargetError(ValueError):
     """Raised by a simulated handler when its required target is unavailable."""
+
+
+class ActionExecutionError(RuntimeError):
+    """Raised when an enabled real integration fails cleanly."""
+
+    def __init__(self, message: str, *, details: dict[str, object]) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 class ApprovalStore(Protocol):
@@ -80,7 +90,7 @@ class SimulatedActionHandler(Protocol):
 
     action_type: ResponseActionType
 
-    def simulate(
+    async def simulate(
         self,
         action: RecommendedAction,
         context: ActionContext,
@@ -93,10 +103,41 @@ class SimulatedActionHandler(Protocol):
 class QuarantineDeviceHandler:
     action_type = ResponseActionType.QUARANTINE_DEVICE
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _device_mac(context)
+        base_url = os.getenv("PACKETFENCE_BASE_URL", "").strip()
+        api_token = os.getenv("PACKETFENCE_API_TOKEN", "").strip()
+        real_execution = os.getenv("PACKETFENCE_REAL_EXECUTION", "").strip().casefold() == "true"
+        if base_url and api_token and real_execution:
+            try:
+                async with PacketFenceClient(base_url, api_token) as client:
+                    outcome = await client.isolate_node(target)
+            except PacketFenceError as exc:
+                details: dict[str, object] = {
+                    "integration": "packetfence",
+                    "operation": "isolate_node",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            details = {
+                "integration": "packetfence",
+                "operation": "isolate_node",
+                "mode": "real",
+                "status_code": outcome.status_code,
+                "isolation_confirmed": outcome.node_status == "unreg",
+            }
+            if outcome.node_status is not None:
+                details["node_status"] = outcome.node_status
+            return SimulatedActionResult(
+                description=f"PacketFence isolated MAC {target}.",
+                target_identifier=target,
+                details=details,
+            )
         return _result(
             f"Would set PacketFence node status to isolated for MAC {target}.",
             target,
@@ -108,7 +149,7 @@ class QuarantineDeviceHandler:
 class DisableUserHandler:
     action_type = ResponseActionType.DISABLE_USER
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _username(context)
@@ -123,7 +164,7 @@ class DisableUserHandler:
 class BlockIpHandler:
     action_type = ResponseActionType.BLOCK_IP
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _ip_address(context)
@@ -138,7 +179,7 @@ class BlockIpHandler:
 class CloseSessionHandler:
     action_type = ResponseActionType.CLOSE_SESSION
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         if context.session_id is None:
@@ -154,7 +195,7 @@ class CloseSessionHandler:
 class RequireMfaHandler:
     action_type = ResponseActionType.REQUIRE_MFA
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _username(context)
@@ -169,7 +210,7 @@ class RequireMfaHandler:
 class NotifyAdministratorHandler:
     action_type = ResponseActionType.NOTIFY_ADMINISTRATOR
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
@@ -184,7 +225,7 @@ class NotifyAdministratorHandler:
 class CreateIncidentHandler:
     action_type = ResponseActionType.CREATE_INCIDENT
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "new response tracking record"
@@ -199,7 +240,7 @@ class CreateIncidentHandler:
 class RequireManualApprovalHandler:
     action_type = ResponseActionType.REQUIRE_MANUAL_APPROVAL
 
-    def simulate(
+    async def simulate(
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
@@ -224,7 +265,7 @@ DEFAULT_HANDLERS: tuple[SimulatedActionHandler, ...] = (
 
 
 class ResponseEngine:
-    """Persist approval decisions and invoke only simulated handlers."""
+    """Persist approval decisions and invoke safe-by-default handlers."""
 
     def __init__(
         self,
@@ -318,11 +359,21 @@ class ResponseEngine:
             )
         else:
             try:
-                result = handler.simulate(record.action, record.context, record.incident_id)
+                result = await handler.simulate(
+                    record.action, record.context, record.incident_id
+                )
             except SimulationTargetError as exc:
                 result = SimulatedActionResult(
                     description=f"Simulation failed: {exc}.",
                     details={"error": str(exc)},
+                )
+                executed = record.model_copy(
+                    update={"execution_status": ExecutionStatus.FAILED, "result": result}
+                )
+            except ActionExecutionError as exc:
+                result = SimulatedActionResult(
+                    description=f"Real execution failed: {exc}.",
+                    details=exc.details,
                 )
                 executed = record.model_copy(
                     update={"execution_status": ExecutionStatus.FAILED, "result": result}
