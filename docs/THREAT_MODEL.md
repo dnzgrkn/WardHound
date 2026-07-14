@@ -42,6 +42,15 @@ also conceal an intrusion or manufacture misleading incidents.
   password, and alert on use of that identity. WardHound confirms the disabled bit with a fresh read
   after modification, but this does not reduce the authorization blast radius of excessive LDAP
   privileges.
+- Cisco FMC blocklist mutation can deny traffic across every managed device whose policy references
+  the configured Network Group. Real execution requires FMC connection credentials, one pre-created
+  group ID, and `FMC_REAL_EXECUTION=true`, plus human approval. The FMC identity should have object
+  read/write access limited to that group where role granularity permits—not broad policy or device
+  administration—and its password requires managed storage and rotation. WardHound confirms FMC
+  group membership but does not deploy pending changes: automatic deployment could also push
+  unrelated administrator changes to devices. Audit records therefore state
+  `enforcement_pending_deploy=true`; operators must review FMC pending changes and deploy through
+  their change-control process before treating the IP as blocked.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and
