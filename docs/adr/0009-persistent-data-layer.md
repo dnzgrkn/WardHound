@@ -69,3 +69,17 @@ fresh repository construction. The existing in-memory stores remain available fo
 tests. Deployments must run migrations before serving traffic; the supplied Compose command and CI
 workflow enforce that ordering. JSONB payload changes remain governed by the Pydantic contracts and
 may require data migrations when a future schema change is not backward compatible.
+
+## Amendment (native async store protocols)
+
+The event, incident, and approval store protocols and their in-memory implementations are now
+native async interfaces. `ResponseEngine` and the FastAPI composition layer await every store
+operation, and PostgreSQL repositories open their operation-scoped `AsyncSession` directly on the
+request's event loop. The compatibility bridge described above—per-call worker threads, nested
+event loops, and `NullPool` as protection against cross-loop connection reuse—has been removed.
+
+This correction preserves operation-scoped sessions and independently committed response audit
+snapshots while preventing database round trips from blocking unrelated HTTP requests, WebSocket
+work, and health checks. `NullPool` remains a deployment choice in the application wiring, not an
+async correctness requirement; adopting a bounded shared pool can be evaluated separately with
+production concurrency and connection-budget measurements.
