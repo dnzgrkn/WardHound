@@ -8,6 +8,7 @@ import { IncidentTable } from "@/components/incident-table";
 import { SummaryStrip } from "@/components/summary-strip";
 import { Button } from "@/components/ui/button";
 import { apiClient, ApiClientError, type WardHoundApi } from "@/lib/api";
+import { type PrivilegedIdentity, unavailableIdentity } from "@/lib/auth";
 import { createSyntheticDemoEvents } from "@/lib/demo-events";
 import {
   applyAnalysisMessage,
@@ -36,9 +37,14 @@ export interface AppProps {
     onMessage: (message: RealtimeMessage) => void,
     onStatus: (status: RealtimeStatus) => void,
   ) => RealtimeConnection;
+  identity?: PrivilegedIdentity;
 }
 
-export function App({ client = apiClient, realtimeConnector = connectRealtime }: AppProps) {
+export function App({
+  client = apiClient,
+  realtimeConnector = connectRealtime,
+  identity = unavailableIdentity,
+}: AppProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -130,40 +136,46 @@ export function App({ client = apiClient, realtimeConnector = connectRealtime }:
     setActionBusyId(action.action_type);
     setActionError(null);
     try {
-      const record = await client.requestAction(selectedId, action);
+      const accessToken = await privilegedAccessToken(identity);
+      if (!accessToken) return;
+      const record = await client.requestAction(selectedId, action, accessToken);
       setActionRecords((current) => upsertActionRecord(current, record));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
       setActionBusyId(null);
     }
-  }, [client, selectedId]);
+  }, [client, identity, selectedId]);
 
-  const approveAction = useCallback(async (recordId: string, decidedBy: string): Promise<void> => {
+  const approveAction = useCallback(async (recordId: string): Promise<void> => {
     setActionBusyId(recordId);
     setActionError(null);
     try {
-      const record = await client.approveAction(recordId, decidedBy);
+      const accessToken = await privilegedAccessToken(identity);
+      if (!accessToken) return;
+      const record = await client.approveAction(recordId, accessToken);
       setActionRecords((current) => upsertActionRecord(current, record));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
       setActionBusyId(null);
     }
-  }, [client]);
+  }, [client, identity]);
 
-  const rejectAction = useCallback(async (recordId: string, decidedBy: string, reason: string): Promise<void> => {
+  const rejectAction = useCallback(async (recordId: string, reason: string): Promise<void> => {
     setActionBusyId(recordId);
     setActionError(null);
     try {
-      const record = await client.rejectAction(recordId, decidedBy, reason);
+      const accessToken = await privilegedAccessToken(identity);
+      if (!accessToken) return;
+      const record = await client.rejectAction(recordId, reason, accessToken);
       setActionRecords((current) => upsertActionRecord(current, record));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
       setActionBusyId(null);
     }
-  }, [client]);
+  }, [client, identity]);
 
   const sortedIncidents = useMemo(() => sortIncidents(incidents, filters), [incidents, filters]);
 
@@ -235,4 +247,15 @@ function analysisErrorMessage(error: unknown): string {
     return "AI analysis is unavailable because ANTHROPIC_API_KEY is not configured on the API service.";
   }
   return errorMessage(error);
+}
+
+async function privilegedAccessToken(identity: PrivilegedIdentity): Promise<string | null> {
+  if (!identity.configured) {
+    throw new Error("Auth0 identity is not configured. Configure Auth0 to request or decide actions.");
+  }
+  if (!identity.authenticated) {
+    await identity.login();
+    return null;
+  }
+  return identity.accessToken();
 }

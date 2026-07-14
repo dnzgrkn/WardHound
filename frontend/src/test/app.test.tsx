@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { App } from "@/App";
 import type { WardHoundApi } from "@/lib/api";
+import type { PrivilegedIdentity } from "@/lib/auth";
 import type { RealtimeConnection } from "@/lib/realtime";
 import { analysis, detail, incident, pendingRecord } from "@/test/fixtures";
 
@@ -45,5 +46,35 @@ describe("incident dashboard", () => {
 
     expect(await screen.findByText("Awaiting human")).toBeInTheDocument();
     expect(listIncidentActions).toHaveBeenCalledWith(incident.id);
+  });
+
+  it("prompts for Auth0 login before an approval request", async () => {
+    const user = userEvent.setup();
+    const login = vi.fn(() => Promise.resolve());
+    const approveAction = vi.fn(() => Promise.resolve(pendingRecord));
+    const identity: PrivilegedIdentity = {
+      configured: true,
+      authenticated: false,
+      login,
+      accessToken: () => Promise.resolve("synthetic-access-token"),
+    };
+    render(
+      <App
+        client={{
+          ...client,
+          listIncidentActions: () => Promise.resolve([pendingRecord]),
+          approveAction,
+        }}
+        realtimeConnector={noRealtime}
+        identity={identity}
+      />,
+    );
+
+    await user.click(await screen.findByText(incident.title));
+    await user.click(await screen.findByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(approveAction).not.toHaveBeenCalled();
   });
 });

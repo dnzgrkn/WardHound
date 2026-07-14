@@ -31,9 +31,9 @@ export interface WardHoundApi {
   listIncidentActions(incidentId: string): Promise<ActionAuditRecord[]>;
   analyzeIncident(incidentId: string): Promise<RootCauseAnalysis>;
   ingestEvents(events: NormalizedEvent[]): Promise<Incident[]>;
-  requestAction(incidentId: string, action: RecommendedAction): Promise<ActionAuditRecord>;
-  approveAction(recordId: string, decidedBy: string): Promise<ActionAuditRecord>;
-  rejectAction(recordId: string, decidedBy: string, reason: string): Promise<ActionAuditRecord>;
+  requestAction(incidentId: string, action: RecommendedAction, accessToken: string): Promise<ActionAuditRecord>;
+  approveAction(recordId: string, accessToken: string): Promise<ActionAuditRecord>;
+  rejectAction(recordId: string, reason: string, accessToken: string): Promise<ActionAuditRecord>;
 }
 
 interface ClientOptions {
@@ -84,38 +84,43 @@ export class WardHoundApiClient implements WardHoundApi {
   requestAction(
     incidentId: string,
     action: RecommendedAction,
+    accessToken: string,
   ): Promise<ActionAuditRecord> {
     return this.request<ActionAuditRecord>(`/incidents/${incidentId}/actions`, {
       method: "POST",
       body: JSON.stringify(action),
-    });
+    }, accessToken);
   }
 
-  approveAction(recordId: string, decidedBy: string): Promise<ActionAuditRecord> {
+  approveAction(recordId: string, accessToken: string): Promise<ActionAuditRecord> {
     return this.request<ActionAuditRecord>(`/actions/${recordId}/approve`, {
       method: "POST",
-      body: JSON.stringify({ decided_by: decidedBy }),
-    });
+    }, accessToken);
   }
 
   rejectAction(
     recordId: string,
-    decidedBy: string,
     reason: string,
+    accessToken: string,
   ): Promise<ActionAuditRecord> {
     return this.request<ActionAuditRecord>(`/actions/${recordId}/reject`, {
       method: "POST",
-      body: JSON.stringify({ decided_by: decidedBy, reason }),
-    });
+      body: JSON.stringify({ reason }),
+    }, accessToken);
   }
 
-  private async request<Response>(path: string, init: RequestInit = {}): Promise<Response> {
+  private async request<Response>(
+    path: string,
+    init: RequestInit = {},
+    accessToken?: string,
+  ): Promise<Response> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "X-API-Key": this.apiKey,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...init.headers,
       },
     });

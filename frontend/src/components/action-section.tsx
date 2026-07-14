@@ -18,8 +18,8 @@ export function ActionSection({
   records: ActionAuditRecord[];
   busyId: string | null;
   onSubmit: (action: RecommendedAction) => Promise<void>;
-  onApprove: (recordId: string, decidedBy: string) => Promise<void>;
-  onReject: (recordId: string, decidedBy: string, reason: string) => Promise<void>;
+  onApprove: (recordId: string) => Promise<void>;
+  onReject: (recordId: string, reason: string) => Promise<void>;
 }) {
   const incidentRecords = records.filter((record) => record.incident_id === incidentId);
   const actions = recommendations.length > 0 ? recommendations : incidentRecords.map((record) => record.action);

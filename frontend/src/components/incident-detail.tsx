@@ -33,8 +33,8 @@ export function IncidentDetailView({
   onBack: () => void;
   onAnalyze: () => void;
   onSubmitAction: (action: RecommendedAction) => Promise<void>;
-  onApprove: (recordId: string, decidedBy: string) => Promise<void>;
-  onReject: (recordId: string, decidedBy: string, reason: string) => Promise<void>;
+  onApprove: (recordId: string) => Promise<void>;
+  onReject: (recordId: string, reason: string) => Promise<void>;
 }) {
   if (loading || !detail) {
     return (

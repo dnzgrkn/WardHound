@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { label } from "@/lib/format";
 import type { ActionAuditRecord, RecommendedAction } from "@/lib/types";
@@ -21,24 +20,23 @@ interface ActionCardProps {
   record?: ActionAuditRecord;
   busy: boolean;
   onSubmit: (action: RecommendedAction) => Promise<void>;
-  onApprove: (recordId: string, decidedBy: string) => Promise<void>;
-  onReject: (recordId: string, decidedBy: string, reason: string) => Promise<void>;
+  onApprove: (recordId: string) => Promise<void>;
+  onReject: (recordId: string, reason: string) => Promise<void>;
 }
 
 export function ActionCard({ action, record, busy, onSubmit, onApprove, onReject }: ActionCardProps) {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [decidedBy, setDecidedBy] = useState("analyst-01");
   const [reason, setReason] = useState("");
 
   const approve = async (): Promise<void> => {
-    if (!record || !decidedBy.trim()) return;
-    await onApprove(record.id, decidedBy.trim());
+    if (!record) return;
+    await onApprove(record.id);
     setApproveOpen(false);
   };
   const reject = async (): Promise<void> => {
-    if (!record || !decidedBy.trim() || !reason.trim()) return;
-    await onReject(record.id, decidedBy.trim(), reason.trim());
+    if (!record || !reason.trim()) return;
+    await onReject(record.id, reason.trim());
     setRejectOpen(false);
     setReason("");
   };
@@ -78,13 +76,10 @@ export function ActionCard({ action, record, busy, onSubmit, onApprove, onReject
             <DialogTitle>Approve simulated response?</DialogTitle>
             <DialogDescription>This records a human decision, then runs only the simulated handler. No external security control is changed.</DialogDescription>
           </DialogHeader>
-          <label className="grid gap-2 text-sm font-medium" htmlFor={`approver-${record?.id ?? action.action_type}`}>
-            Decision maker
-            <Input id={`approver-${record?.id ?? action.action_type}`} value={decidedBy} onChange={(event) => setDecidedBy(event.target.value)} placeholder="analyst-01" />
-          </label>
+          <p className="text-sm text-muted-foreground">Your verified Auth0 identity will be recorded as the decision maker.</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setApproveOpen(false)}>Cancel</Button>
-            <Button onClick={() => void approve()} disabled={busy || !decidedBy.trim()}>{busy && <LoaderCircle className="h-4 w-4 animate-spin" />}Confirm approval</Button>
+            <Button onClick={() => void approve()} disabled={busy}>{busy && <LoaderCircle className="h-4 w-4 animate-spin" />}Confirm approval</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -95,17 +90,14 @@ export function ActionCard({ action, record, busy, onSubmit, onApprove, onReject
             <DialogTitle>Reject response action</DialogTitle>
             <DialogDescription>Rejection is final for this audit record. The simulated handler will not run.</DialogDescription>
           </DialogHeader>
-          <label className="grid gap-2 text-sm font-medium" htmlFor={`rejector-${record?.id ?? action.action_type}`}>
-            Decision maker
-            <Input id={`rejector-${record?.id ?? action.action_type}`} value={decidedBy} onChange={(event) => setDecidedBy(event.target.value)} />
-          </label>
+          <p className="text-sm text-muted-foreground">Your verified Auth0 identity will be recorded as the decision maker.</p>
           <label className="grid gap-2 text-sm font-medium" htmlFor={`reason-${record?.id ?? action.action_type}`}>
             Rejection reason
             <Textarea id={`reason-${record?.id ?? action.action_type}`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain why this action should not proceed…" />
           </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => void reject()} disabled={busy || !decidedBy.trim() || !reason.trim()}>{busy && <LoaderCircle className="h-4 w-4 animate-spin" />}Confirm rejection</Button>
+            <Button variant="destructive" onClick={() => void reject()} disabled={busy || !reason.trim()}>{busy && <LoaderCircle className="h-4 w-4 animate-spin" />}Confirm rejection</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

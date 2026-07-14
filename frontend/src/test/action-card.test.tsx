@@ -29,7 +29,6 @@ describe("human approval controls", () => {
 
     expect(onReject).toHaveBeenCalledWith(
       pendingRecord.id,
-      "analyst-01",
       "Expected synthetic activity.",
     );
   });
