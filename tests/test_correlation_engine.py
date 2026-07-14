@@ -167,6 +167,39 @@ def test_does_not_use_mac_to_override_conflicting_usernames() -> None:
     assert CorrelationEngine().correlate(events) == []
 
 
+def test_clusters_repeated_evidence_for_entity_inside_window() -> None:
+    first_chain = correlated_events()
+    second_chain = correlated_events()
+    events = [
+        event.model_copy(update={"occurred_at": event.occurred_at + timedelta(minutes=1)})
+        for event in second_chain
+    ]
+    events.extend(first_chain)
+
+    incidents = CorrelationEngine().correlate(events)
+
+    assert len(incidents) == 1
+    assert set(incidents[0].event_ids) == {event.id for event in events}
+    assert len(incidents[0].event_ids) == 6
+
+
+def test_reports_time_separated_clusters_for_same_entity() -> None:
+    first_chain = correlated_events()
+    second_chain = [
+        event.model_copy(update={"occurred_at": event.occurred_at + timedelta(hours=2)})
+        for event in correlated_events()
+    ]
+
+    incidents = CorrelationEngine().correlate([*second_chain, *first_chain])
+
+    assert len(incidents) == 2
+    assert {frozenset(incident.event_ids) for incident in incidents} == {
+        frozenset(event.id for event in first_chain),
+        frozenset(event.id for event in second_chain),
+    }
+    assert incidents[0].id != incidents[1].id
+
+
 def test_rule_registry_accepts_configured_window() -> None:
     engine = CorrelationEngine(rules=[CrossSystemCompromiseRule(window=timedelta(minutes=5))])
 

@@ -144,7 +144,22 @@ configuration. All three engines can be tested or replaced independently. New co
 policy behavior is added through concrete rule registries, while scoring changes are data changes
 to weight maps.
 
-This design does not deduplicate incidents across persisted runs, retain policy configuration,
-resolve identities, or fetch event evidence after the in-memory input collection is released.
-Those require the future event-store, identity graph, and policy-management layers and are outside
-Stage 3.
+This design does not retain policy configuration, resolve identities, or fetch event evidence after
+the in-memory input collection is released. Those require the future event-store, identity graph,
+and policy-management layers and are outside Stage 3.
+
+## Amendment (entity-window clustering)
+
+Correlation matches are clustered per shared entity key instead of taking the Cartesian product of
+the rule's requirement buckets. Qualifying events are sorted deterministically by occurrence time
+and event ID. Starting with the earliest unconsumed event, the rule gathers every qualifying event
+through the inclusive end of the configured window. When that cluster contains at least one event
+for every requirement and still satisfies the existing shared-entity rules, it emits one incident
+referencing the entire cluster and continues with the next unconsumed event. If a candidate window
+is incomplete, the scan advances by one event so later valid evidence is not skipped.
+
+Including all qualifying evidence models repeated submissions inside one temporal cluster as one
+ongoing operator-facing situation rather than silently choosing one combination. Consuming a
+completed cluster keeps genuinely separate, time-separated sequences distinct. Incident IDs remain
+deterministic because they are still UUIDv5 values derived from the rule ID and the sorted IDs of
+the evidence included in each cluster.

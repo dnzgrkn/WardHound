@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from itertools import product
 from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -76,7 +75,7 @@ class CrossSystemCompromiseRule:
             EventRequirement(SourceSystem.PACKETFENCE, NormalizedEventType.DEVICE_QUARANTINED),
             EventRequirement(SourceSystem.JUMPSERVER, NormalizedEventType.SESSION_STARTED),
         )
-        buckets = [
+        buckets = tuple(
             [
                 event
                 for event in events
@@ -84,32 +83,59 @@ class CrossSystemCompromiseRule:
                 and event.event_type is requirement.event_type
             ]
             for requirement in requirements
-        ]
+        )
         if any(not bucket for bucket in buckets):
             return []
 
         matches: list[CorrelationMatch] = []
         seen_event_sets: set[tuple[UUID, ...]] = set()
-        for candidate in product(*buckets):
-            shared_keys = _shared_entity_keys(candidate)
-            if not shared_keys:
-                continue
-            times = [event.occurred_at for event in candidate]
-            if max(times) - min(times) > self.window:
-                continue
-            event_key = tuple(sorted((event.id for event in candidate), key=str))
-            if event_key in seen_event_sets:
-                continue
-            seen_event_sets.add(event_key)
-            matches.append(
-                CorrelationMatch(
-                    rule_id=self.rule_id,
-                    title=self.title,
-                    summary=self.summary,
-                    events=tuple(candidate),
-                    entities=tuple(_unique_entities(candidate)),
-                )
+        candidate_keys = set.intersection(
+            *({key for event in bucket for key in _entity_keys(event)} for bucket in buckets)
+        )
+        for entity_key in sorted(candidate_keys):
+            entity_events = sorted(
+                {
+                    event.id: event
+                    for bucket in buckets
+                    for event in bucket
+                    if entity_key in _entity_keys(event)
+                }.values(),
+                key=lambda event: (event.occurred_at, str(event.id)),
             )
+            start = 0
+            while start < len(entity_events):
+                cluster_end = entity_events[start].occurred_at + self.window
+                stop = start
+                while (
+                    stop < len(entity_events)
+                    and entity_events[stop].occurred_at <= cluster_end
+                ):
+                    stop += 1
+                cluster = tuple(entity_events[start:stop])
+                satisfies_requirements = all(
+                    any(
+                        event.source_system is requirement.source_system
+                        and event.event_type is requirement.event_type
+                        for event in cluster
+                    )
+                    for requirement in requirements
+                )
+                if satisfies_requirements and entity_key in _shared_entity_keys(cluster):
+                    event_key = tuple(sorted((event.id for event in cluster), key=str))
+                    if event_key not in seen_event_sets:
+                        seen_event_sets.add(event_key)
+                        matches.append(
+                            CorrelationMatch(
+                                rule_id=self.rule_id,
+                                title=self.title,
+                                summary=self.summary,
+                                events=cluster,
+                                entities=tuple(_unique_entities(cluster)),
+                            )
+                        )
+                    start = stop
+                else:
+                    start += 1
         return matches
 
 
