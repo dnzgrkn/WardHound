@@ -9,6 +9,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.integrations.active_directory import ActiveDirectoryClient, ActiveDirectoryError
+from app.integrations.firepower import FirepowerClient, FirepowerError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
@@ -205,11 +206,45 @@ class BlockIpHandler:
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _ip_address(context)
+        base_url = os.getenv("FMC_BASE_URL", "").strip()
+        username = os.getenv("FMC_USERNAME", "").strip()
+        password = os.getenv("FMC_PASSWORD", "")
+        network_group_id = os.getenv("FMC_BLOCKLIST_NETWORK_GROUP_ID", "").strip()
+        real_execution = os.getenv("FMC_REAL_EXECUTION", "").strip().casefold() == "true"
+        if base_url and username and password and network_group_id and real_execution:
+            try:
+                async with FirepowerClient(base_url, username, password) as client:
+                    outcome = await client.add_blocklist_member(network_group_id, target)
+            except (FirepowerError, ValueError) as exc:
+                details: dict[str, object] = {
+                    "integration": "cisco_fmc",
+                    "operation": "add_blocklist_member",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if isinstance(exc, FirepowerError) and exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            return SimulatedActionResult(
+                description=(
+                    f"Cisco FMC blocklist membership confirmed for IP {target}; "
+                    "deployment is required before enforcement."
+                ),
+                target_identifier=target,
+                details={
+                    "integration": "cisco_fmc",
+                    "operation": "add_blocklist_member",
+                    "mode": "real",
+                    "already_blocked": outcome.already_blocked,
+                    "membership_confirmed": True,
+                    "enforcement_pending_deploy": outcome.enforcement_pending_deploy,
+                },
+            )
         return _result(
             f"Would add IP {target} to the firewall deny policy.",
             target,
-            integration="firewall",
-            operation="add_deny_rule",
+            integration="cisco_fmc",
+            operation="add_blocklist_member",
         )
 
 
