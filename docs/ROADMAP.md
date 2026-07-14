@@ -46,9 +46,12 @@ Prometheus metrikleri, Grafana dashboard, OpenTelemetry tracing. Correlation/pol
 
 README (mermaid mimari diyagramı, kurulum, demo GIF), ADR'ları topla, anonimleştirilmiş case study ("gerçek kurumsal Zero Trust altyapısına karşı test edildi" — client ismi yok), tek komutla `docker-compose up` demo, v2 roadmap notu (ML tabanlı anomaly detection, multi-tenant, SOAR entegrasyonları — şimdi yapma, sadece yaz).
 
+## Aşama 9 — Kalıcı Veri Katmanı (v2'nin ilk maddesi) ✅ tamamlandı
+
+In-memory store'lar (`InMemoryEventStore`, `InMemoryIncidentStore`, `InMemoryApprovalStore`) SQLAlchemy async modelleri, Alembic migration'ları ve Postgres-backed repository'lerle değiştirildi — restart sonrası incident, event, analiz ve approval geçmişi korunuyor, uçtan uca doğrulandı (`docker compose restart api` sonrası incident hâlâ erişilebilir). İlk implementasyonda `EventStore`/`IncidentStore`/`ApprovalStore` Protocol'leri senkron kalmıştı ve Postgres'e gerçek async I/O yaptırmak için her çağrıda yeni thread + yeni event loop açan bir shim kullanılmıştı — bu, event loop'u bloke edip API'yi eşzamanlı yük altında fiilen sıralı hale getiriyordu. Ayrı bir düzeltmeyle (`fix/async-store-protocols`) Protocol'ler native async yapıldı, shim tamamen kaldırıldı, ve eşzamanlı isteklerin gerçekten iç içe geçtiğini kanıtlayan bir regresyon testi eklendi. Detaylar: `docs/adr/0009-persistent-data-layer.md` ve amendment bölümü.
+
 ## v2 / Sonraki adımlar
 
-- **Kalıcı veri katmanı:** In-memory store'ları SQLAlchemy modelleri, Alembic migration'ları ve Postgres-backed repository'lerle değiştirmek; restart sonrası incident, event, analiz ve approval geçmişini korumak için gerekli.
 - **Gerçek kimlik doğrulama ve yetkilendirme:** OIDC/JWT tabanlı kullanıcı kimliği ve response talep eden ile onaylayan rolleri ayırmak; kararları client-asserted etiket yerine doğrulanmış principal'a bağlamak için gerekli.
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
