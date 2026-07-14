@@ -60,11 +60,17 @@ Sekiz response action'dan yalnızca `QUARANTINE_DEVICE`, PacketFence'e karşı g
 
 İlk implementasyonda ciddi bir doğruluk hatası vardı: `isolate_node`, PacketFence'in `POST /api/v1/nodes/bulk_deregister` endpoint'ini çağırıyordu — bu, cihazın kaydını tamamen siliyor (node'u "unregistered" durumuna getirip yeniden captive portal kaydına zorluyor), "isolated" durumuna geçirmiyor. Gerçek isolation, PacketFence'in security-event mekanizmasıyla tetikleniyor. Ayrı bir düzeltmeyle (`fix/packetfence-isolation-endpoint`) doğru endpoint'e (`PUT /api/v1/node/{mac}/apply_security_event`) geçildi, üçüncü bir zorunlu konfigürasyon sinyali (`PACKETFENCE_ISOLATION_SECURITY_EVENT_ID`) eklendi, ve gate'in dört sinyalin hiçbirini atlamadığını kanıtlayan parametrize testler yazıldı. Bu hata PacketFence'in gerçek controller kaynak kodu okunarak (`lib/pf/UnifiedApi/Controller/Nodes.pm`) tespit edildi — agent'ın kendi test suite'i bunu yakalamamıştı, çünkü testler yanlış endpoint'i doğru varsayarak mock'lanmıştı. Detaylar: `docs/adr/0011-real-packetfence-integration.md` ve amendment bölümü.
 
+## Aşama 12 — İkinci Gerçek SOAR Entegrasyonu: Active Directory Disable User ✅ tamamlandı
+
+`DisableUserHandler` artık self-hosted Active Directory'ye karşı gerçek bir LDAP mutasyonu yapabiliyor — `ldap3` üzerinden LDAPS ile bağlanıp `userAccountControl`'e `ACCOUNTDISABLE` bitini yazıyor. Bu aşama Stage 11'den kasıtlı olarak daha yüksek riskli kabul edildi: PacketFence quarantine sadece bir cihazın ağ erişimini kısıtlarken, AD hesabı devre dışı bırakmak email/SSO/VPN/PAM dahil o kimliğin güvendiği her şeyi etkileyebiliyor. Beş bağımsız sinyal gerekiyor (`AD_LDAP_URL`, `AD_BIND_DN`, `AD_BIND_PASSWORD`, `AD_USER_SEARCH_BASE_DN`, `AD_REAL_EXECUTION=true`) — herhangi biri eksikse simülasyona düşüyor.
+
+`ldap3` senkron bir kütüphane olduğu için (asyncpg gibi native async sürücüsü yok), tüm LDAP işlemi (bind→search→modify→confirm→unbind) tek bir `asyncio.to_thread` çağrısında yürütülüyor — bu, Stage 9'daki hatanın (zaten async olan bir sürücüyü gereksiz thread+nested-loop shim'i arkasına saklamak) tekrarı değil, gerçekten senkron bir kütüphaneyi event loop'tan doğru şekilde ayırma. Stage 11'in `bulk_deregister` dersi burada da uygulandı: `modify()` çağrısı başarı dönse bile, client `userAccountControl`'ü tekrar okuyup `ACCOUNTDISABLE` bitinin gerçekten set edildiğini doğrulamadan başarı raporlamıyor — bunu kanıtlayan bir regresyon testi var (modify sahte başarı döndüğünde durum değişmemişse hata fırlatılıyor). Detaylar: `docs/adr/0012-real-active-directory-disable.md`.
+
 ## v2 / Sonraki adımlar
 
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
-- **Kalan SOAR entegrasyonları:** Quarantine dışındaki yedi response action (disable user, block IP, close session, require MFA, notify administrator, create incident, require manual approval) hâlâ simülasyon — her biri kendi hedef sistemine karşı aynı safety-gate deseniyle (çoklu sinyal + insan onayı) tek tek gerçek hale getirilecek.
+- **Kalan SOAR entegrasyonları:** Quarantine ve disable-user dışındaki altı response action (block IP, close session, require MFA, notify administrator, create incident, require manual approval) hâlâ simülasyon — her biri kendi hedef sistemine karşı aynı safety-gate deseniyle (çoklu sinyal + insan onayı + sonuç doğrulama) tek tek gerçek hale getirilecek.
 
 ---
 
