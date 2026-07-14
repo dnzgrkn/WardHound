@@ -71,11 +71,11 @@ async def ingest_events(batch: EventBatch, services: ApiServicesDependency) -> l
         span.set_attribute("wardhound.event.count", len(batch.events))
         event_types = ",".join(sorted({event.event_type.value for event in batch.events}))
         span.set_attribute("wardhound.event.types", event_types)
-        services.events.add_all(batch.events)
-        incidents = run_pipeline(services.events.get_all())
+        await services.events.add_all(batch.events)
+        incidents = run_pipeline(await services.events.get_all())
         span.set_attribute("wardhound.incident.count", len(incidents))
     for incident in incidents:
-        created = services.incidents.upsert(incident)
+        created = await services.incidents.upsert(incident)
         if created:
             INCIDENTS_CREATED.labels(incident.severity.value).inc()
         await services.connections.broadcast(
@@ -100,7 +100,7 @@ async def list_incidents(
     order: SortOrder = SortOrder.DESC,
 ) -> list[Incident]:
     """List retained incidents using explicit filters and one supported sort key."""
-    incidents = services.incidents.list_all()
+    incidents = await services.incidents.list_all()
     if severity is not None:
         incidents = [incident for incident in incidents if incident.severity is severity]
     if incident_status is not None:
@@ -122,13 +122,13 @@ async def get_incident(
     incident_id: UUID, services: ApiServicesDependency
 ) -> IncidentDetail | JSONResponse:
     """Return an incident with retained normalized evidence and optional analysis."""
-    incident = services.incidents.get(incident_id)
+    incident = await services.incidents.get(incident_id)
     if incident is None:
         return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
     return IncidentDetail(
         incident=incident,
-        evidence=services.events.get_many(incident.event_ids),
-        analysis=services.incidents.get_analysis(incident.id),
+        evidence=await services.events.get_many(incident.event_ids),
+        analysis=await services.incidents.get_analysis(incident.id),
     )
 
 
@@ -141,9 +141,9 @@ async def list_incident_actions(
     incident_id: UUID, services: ApiServicesDependency
 ) -> list[ActionAuditRecord] | JSONResponse:
     """Return the latest response snapshot for every action linked to an incident."""
-    if services.incidents.get(incident_id) is None:
+    if await services.incidents.get(incident_id) is None:
         return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
-    return services.response_engine.list_for_incident(incident_id)
+    return await services.response_engine.list_for_incident(incident_id)
 
 
 @router.post(
@@ -160,10 +160,10 @@ async def analyze_incident(
     incident_id: UUID, services: ApiServicesDependency
 ) -> RootCauseAnalysis | JSONResponse:
     """Generate and retain one explicit on-demand structured analysis."""
-    incident = services.incidents.get(incident_id)
+    incident = await services.incidents.get(incident_id)
     if incident is None:
         return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
-    evidence = services.events.get_many(incident.event_ids)
+    evidence = await services.events.get_many(incident.event_ids)
     started = time.perf_counter()
     try:
         with tracer.start_as_current_span("wardhound.ai_analysis") as span:
@@ -186,7 +186,7 @@ async def analyze_incident(
     finally:
         AI_ANALYSIS_DURATION.observe(time.perf_counter() - started)
     AI_ANALYSIS_CALLS.labels("success").inc()
-    services.incidents.save_analysis(incident.id, analysis)
+    await services.incidents.save_analysis(incident.id, analysis)
     await services.connections.broadcast(
         RealtimeMessage[AnalysisCompleted](
             type=RealtimeEventType.ANALYSIS_COMPLETED,
@@ -207,11 +207,11 @@ async def request_action(
     services: ApiServicesDependency,
 ) -> ActionAuditRecord | JSONResponse:
     """Submit a typed recommendation to the existing simulated response engine."""
-    incident = services.incidents.get(incident_id)
+    incident = await services.incidents.get(incident_id)
     if incident is None:
         return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
-    evidence = services.events.get_many(incident.event_ids)
-    record = services.response_engine.request_action(
+    evidence = await services.events.get_many(incident.event_ids)
+    record = await services.response_engine.request_action(
         action,
         incident_id=incident.id,
         context=action_context_from_incident(incident, evidence),
@@ -238,7 +238,7 @@ async def approve_action(
 ) -> ActionAuditRecord | JSONResponse:
     """Approve a pending response record and simulate its registered handler."""
     try:
-        record = services.response_engine.approve(record_id, decision.decided_by)
+        record = await services.response_engine.approve(record_id, decision.decided_by)
     except ActionRecordNotFoundError as exc:
         return _error(status.HTTP_404_NOT_FOUND, "action_not_found", str(exc))
     except InvalidActionTransitionError as exc:
@@ -264,7 +264,7 @@ async def reject_action(
 ) -> ActionAuditRecord | JSONResponse:
     """Reject a pending response record without invoking its handler."""
     try:
-        record = services.response_engine.reject(
+        record = await services.response_engine.reject(
             record_id,
             decision.decided_by,
             decision.reason,

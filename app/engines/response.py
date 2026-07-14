@@ -34,19 +34,19 @@ class SimulationTargetError(ValueError):
 class ApprovalStore(Protocol):
     """Persistence seam for immutable response lifecycle snapshots."""
 
-    def append(self, record: ActionAuditRecord) -> None:
+    async def append(self, record: ActionAuditRecord) -> None:
         """Append a new snapshot for a request without altering earlier snapshots."""
         ...
 
-    def get(self, record_id: UUID) -> ActionAuditRecord | None:
+    async def get(self, record_id: UUID) -> ActionAuditRecord | None:
         """Return the latest snapshot for a request, if it exists."""
         ...
 
-    def history(self, record_id: UUID) -> tuple[ActionAuditRecord, ...]:
+    async def history(self, record_id: UUID) -> tuple[ActionAuditRecord, ...]:
         """Return every snapshot for a request in append order."""
         ...
 
-    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+    async def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
         """Return the latest snapshot of every request linked to an incident."""
         ...
 
@@ -57,17 +57,17 @@ class InMemoryApprovalStore:
     def __init__(self) -> None:
         self._records: dict[UUID, list[ActionAuditRecord]] = {}
 
-    def append(self, record: ActionAuditRecord) -> None:
+    async def append(self, record: ActionAuditRecord) -> None:
         self._records.setdefault(record.id, []).append(record)
 
-    def get(self, record_id: UUID) -> ActionAuditRecord | None:
+    async def get(self, record_id: UUID) -> ActionAuditRecord | None:
         snapshots = self._records.get(record_id)
         return snapshots[-1] if snapshots else None
 
-    def history(self, record_id: UUID) -> tuple[ActionAuditRecord, ...]:
+    async def history(self, record_id: UUID) -> tuple[ActionAuditRecord, ...]:
         return tuple(self._records.get(record_id, ()))
 
-    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+    async def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
         return [
             snapshots[-1]
             for snapshots in self._records.values()
@@ -237,7 +237,7 @@ class ResponseEngine:
         if len(self.handlers) != len(registered):
             raise ValueError("Only one simulated handler may be registered per action type")
 
-    def request_action(
+    async def request_action(
         self,
         action: RecommendedAction,
         incident_id: UUID | None = None,
@@ -260,16 +260,16 @@ class ResponseEngine:
                 ApprovalStatus.PENDING if needs_approval else ApprovalStatus.AUTO_APPROVED
             ),
         )
-        self.store.append(record)
-        return record if needs_approval else self._execute(record)
+        await self.store.append(record)
+        return record if needs_approval else await self._execute(record)
 
-    def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
+    async def list_for_incident(self, incident_id: UUID) -> list[ActionAuditRecord]:
         """Return current response records associated with an incident."""
-        return self.store.list_for_incident(incident_id)
+        return await self.store.list_for_incident(incident_id)
 
-    def approve(self, record_id: UUID, decided_by: str) -> ActionAuditRecord:
+    async def approve(self, record_id: UUID, decided_by: str) -> ActionAuditRecord:
         """Approve a pending request and then run its simulated handler."""
-        record = self._pending_record(record_id)
+        record = await self._pending_record(record_id)
         approved = record.model_copy(
             update={
                 "approval_status": ApprovalStatus.APPROVED,
@@ -277,12 +277,14 @@ class ResponseEngine:
                 "decided_at": datetime.now(UTC),
             }
         )
-        self.store.append(approved)
-        return self._execute(approved)
+        await self.store.append(approved)
+        return await self._execute(approved)
 
-    def reject(self, record_id: UUID, decided_by: str, reason: str) -> ActionAuditRecord:
+    async def reject(
+        self, record_id: UUID, decided_by: str, reason: str
+    ) -> ActionAuditRecord:
         """Reject a pending request without invoking any handler."""
-        record = self._pending_record(record_id)
+        record = await self._pending_record(record_id)
         rejected = record.model_copy(
             update={
                 "approval_status": ApprovalStatus.REJECTED,
@@ -291,11 +293,11 @@ class ResponseEngine:
                 "reason": _required_text(reason, "reason"),
             }
         )
-        self.store.append(rejected)
+        await self.store.append(rejected)
         return rejected
 
-    def _pending_record(self, record_id: UUID) -> ActionAuditRecord:
-        record = self.store.get(record_id)
+    async def _pending_record(self, record_id: UUID) -> ActionAuditRecord:
+        record = await self.store.get(record_id)
         if record is None:
             raise ActionRecordNotFoundError(f"Unknown response record: {record_id}")
         if record.approval_status is not ApprovalStatus.PENDING:
@@ -304,7 +306,7 @@ class ResponseEngine:
             )
         return record
 
-    def _execute(self, record: ActionAuditRecord) -> ActionAuditRecord:
+    async def _execute(self, record: ActionAuditRecord) -> ActionAuditRecord:
         handler = self.handlers.get(record.action.action_type)
         if handler is None:
             result = SimulatedActionResult(
@@ -329,7 +331,7 @@ class ResponseEngine:
                 executed = record.model_copy(
                     update={"execution_status": ExecutionStatus.SIMULATED, "result": result}
                 )
-        self.store.append(executed)
+        await self.store.append(executed)
         return executed
 
 
