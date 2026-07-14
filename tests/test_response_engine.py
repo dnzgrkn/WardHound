@@ -4,13 +4,21 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from ldap3 import MOCK_SYNC, Connection, Server
 
 import app.engines.response as response_module
 from app.engines.response import (
+    DisableUserHandler,
     InMemoryApprovalStore,
     QuarantineDeviceHandler,
     ResponseEngine,
     action_context_from_incident,
+)
+from app.integrations.active_directory import (
+    AD_ACCOUNTDISABLE,
+    ActiveDirectoryClient,
+    ActiveDirectoryError,
+    DisableAccountResult,
 )
 from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
 from app.schemas.analysis import RecommendedAction, ResponseActionType
@@ -47,6 +55,32 @@ class StubPacketFenceClient:
         if self.error is not None:
             raise self.error
         return PacketFenceIsolationResult(status_code=200, security_event_record_id=42)
+
+
+class StubActiveDirectoryClient:
+    calls: list[str] = []
+    error: ActiveDirectoryError | None = None
+
+    def __init__(
+        self,
+        ldap_url: str,
+        bind_dn: str,
+        bind_password: str,
+        search_base_dn: str,
+    ) -> None:
+        assert ldap_url == "ldaps://dc01.corp.example.com:636"
+        assert bind_dn == BIND_DN
+        assert bind_password == "synthetic-bind-password"
+        assert search_base_dn == "OU=Users,DC=corp,DC=example,DC=com"
+
+    async def disable_user(self, sam_account_name: str) -> DisableAccountResult:
+        self.calls.append(sam_account_name)
+        if self.error is not None:
+            raise self.error
+        return DisableAccountResult(already_disabled=False)
+
+
+BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
 
 
 def incident_and_evidence() -> tuple[Incident, NormalizedEvent]:
@@ -325,3 +359,146 @@ async def test_packetfence_failure_becomes_explainable_audit_record(
     assert record.result.details["mode"] == "real"
     assert record.result.details["status_code"] == 503
     assert "HTTP 503" in record.result.description
+
+
+@pytest.mark.parametrize(
+    "missing_variable",
+    [
+        "AD_LDAP_URL",
+        "AD_BIND_DN",
+        "AD_BIND_PASSWORD",
+        "AD_USER_SEARCH_BASE_DN",
+        "AD_REAL_EXECUTION",
+        None,
+    ],
+)
+async def test_active_directory_execution_gate_requires_all_five_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_variable: str | None,
+) -> None:
+    monkeypatch.setattr(
+        response_module, "ActiveDirectoryClient", StubActiveDirectoryClient
+    )
+    configuration = {
+        "AD_LDAP_URL": "ldaps://dc01.corp.example.com:636",
+        "AD_BIND_DN": BIND_DN,
+        "AD_BIND_PASSWORD": "synthetic-bind-password",
+        "AD_USER_SEARCH_BASE_DN": "OU=Users,DC=corp,DC=example,DC=com",
+        "AD_REAL_EXECUTION": "true",
+    }
+    for name, value in configuration.items():
+        monkeypatch.setenv(name, value)
+    if missing_variable is not None:
+        if missing_variable == "AD_REAL_EXECUTION":
+            monkeypatch.setenv(missing_variable, "false")
+        else:
+            monkeypatch.delenv(missing_variable)
+    StubActiveDirectoryClient.calls = []
+    StubActiveDirectoryClient.error = None
+    incident, event = incident_and_evidence()
+
+    result = await DisableUserHandler().simulate(
+        action(ResponseActionType.DISABLE_USER, requires_approval=True),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    expected_mode = "real" if missing_variable is None else "simulation"
+    assert result.details["mode"] == expected_mode
+    assert StubActiveDirectoryClient.calls == (["jdoe"] if expected_mode == "real" else [])
+    if expected_mode == "real":
+        assert result.details["operation"] == "disable_account"
+        assert result.details["disable_confirmed"] is True
+        assert result.details["already_disabled"] is False
+
+
+async def test_active_directory_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        response_module, "ActiveDirectoryClient", StubActiveDirectoryClient
+    )
+    monkeypatch.setenv("AD_LDAP_URL", "ldaps://dc01.corp.example.com:636")
+    monkeypatch.setenv("AD_BIND_DN", BIND_DN)
+    monkeypatch.setenv("AD_BIND_PASSWORD", "synthetic-bind-password")
+    monkeypatch.setenv("AD_USER_SEARCH_BASE_DN", "OU=Users,DC=corp,DC=example,DC=com")
+    monkeypatch.setenv("AD_REAL_EXECUTION", "true")
+    StubActiveDirectoryClient.calls = []
+    StubActiveDirectoryClient.error = ActiveDirectoryError("Active Directory bind failed")
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.DISABLE_USER, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details == {
+        "integration": "active_directory",
+        "operation": "disable_account",
+        "mode": "real",
+        "error": "Active Directory bind failed",
+    }
+
+
+async def test_active_directory_real_audit_uses_confirmed_mock_directory_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_dn = "CN=jdoe,OU=Users,DC=corp,DC=example,DC=com"
+    connection = Connection(
+        Server("dc01.corp.example.com"),
+        user=BIND_DN,
+        password="synthetic-bind-password",
+        client_strategy=MOCK_SYNC,
+    )
+    connection.strategy.add_entry(
+        BIND_DN,
+        {"objectClass": ["person"], "userPassword": "synthetic-bind-password"},
+    )
+    connection.strategy.add_entry(
+        user_dn,
+        {
+            "objectClass": ["top", "person", "organizationalPerson", "user"],
+            "sAMAccountName": "jdoe",
+            "userAccountControl": 512,
+        },
+    )
+
+    def mock_client(
+        ldap_url: str,
+        bind_dn: str,
+        bind_password: str,
+        search_base_dn: str,
+    ) -> ActiveDirectoryClient:
+        return ActiveDirectoryClient(
+            ldap_url,
+            bind_dn,
+            bind_password,
+            search_base_dn,
+            connection=connection,
+        )
+
+    monkeypatch.setattr(response_module, "ActiveDirectoryClient", mock_client)
+    monkeypatch.setenv("AD_LDAP_URL", "ldaps://dc01.corp.example.com:636")
+    monkeypatch.setenv("AD_BIND_DN", BIND_DN)
+    monkeypatch.setenv("AD_BIND_PASSWORD", "synthetic-bind-password")
+    monkeypatch.setenv("AD_USER_SEARCH_BASE_DN", "OU=Users,DC=corp,DC=example,DC=com")
+    monkeypatch.setenv("AD_REAL_EXECUTION", "true")
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.DISABLE_USER, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["disable_confirmed"] is True
+    assert int(connection.strategy.entries[user_dn]["userAccountControl"][0]) & AD_ACCOUNTDISABLE
