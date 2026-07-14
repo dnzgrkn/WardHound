@@ -22,6 +22,14 @@ also conceal an intrusion or manufacture misleading incidents.
   is trustworthy. The decisive mitigation is architectural: AI output never executes remediation;
   a human must review evidence and approve every security-state change. Source authentication,
   input limits, provenance, and explicit treatment of event text as untrusted data remain required.
+- PacketFence quarantine is the first outbound infrastructure-mutation boundary. A compromised or
+  over-permissioned API token can deregister devices and interrupt network access. Real execution
+  therefore requires two independent signals: both PacketFence connection settings and
+  `PACKETFENCE_REAL_EXECUTION=true`; human approval remains mandatory. Use a dedicated PacketFence
+  identity restricted to node deregistration where API roles support that granularity, rotate the
+  token, restrict WardHound egress to the management endpoint, and keep the flag false while
+  validating credentials. Deployments that cannot scope the identity accept a larger blast radius
+  and should isolate this integration until compensating controls are in place.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and

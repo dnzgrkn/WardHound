@@ -4,9 +4,9 @@
 
 WardHound is a security event correlation, root-cause analysis, and response-orchestration MVP for operators working across NAC, PAM, Active Directory, and firewall infrastructure. It turns normalized signals from otherwise separate controls into explainable incidents, deterministic risk scores, and reviewable response requests.
 
-> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. Events, incidents, AI analyses, and approvals live in process memory and disappear when the API restarts. Authentication is one shared static API key, collector transports are not continuously scheduled, and every response action is a human-approval-gated **simulation** that records an audit result without changing PacketFence, AD, a firewall, or JumpServer. PostgreSQL, Redis, and Celery run in Compose but are not wired into the main event/incident pipeline.
+> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. Collector transports are not continuously scheduled. Seven response handlers remain human-approval-gated simulations; PacketFence device quarantine is simulated by default and becomes a real deregistration call only when credentials and a separate real-execution flag are both configured.
 
-The deliberate split is simple: rules decide what correlates and how risk is scored; AI explains the retained evidence but cannot emit arbitrary commands; a human must approve security-state changes; simulated handlers never call production control-plane APIs.
+The deliberate split is simple: rules decide what correlates and how risk is scored; AI explains the retained evidence but cannot emit arbitrary commands; a human must approve security-state changes; external mutation is disabled unless its integration-specific safety gate is explicitly satisfied.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ flowchart LR
     Engines["Correlation → policy → risk<br/>deterministic engines"]
     Store["Event + incident + analysis stores<br/>IN-MEMORY / lost on restart"]
     AI["AI analysis engine<br/>on demand / structured output"]
-    Response["Response engine<br/>human approval required<br/>SIMULATED actions only"]
+    Response["Response engine<br/>human approval required<br/>PacketFence real only when explicitly enabled"]
     Dashboard["Dashboard<br/>REST + WebSocket"]
     Infra[("PostgreSQL + Redis + Celery<br/>durable infrastructure present<br/>not connected to incident state")]
     Telemetry["Cross-cutting telemetry<br/>Prometheus + Grafana + Jaeger"]
@@ -41,7 +41,7 @@ flowchart LR
     class Infra durable;
 ```
 
-Legend: yellow is process-local state, red is simulation-only behavior, and green is durable infrastructure. A green service does not imply that the current incident workflow persists to it.
+Legend: yellow is process-local state, red is safety-gated response behavior, and green is durable infrastructure. A green service does not imply that the current incident workflow persists to it.
 
 ## Run the demo
 
@@ -59,7 +59,7 @@ Prerequisites are Docker with Docker Compose and available ports 3000, 3001, 800
 
 The button creates a fully synthetic AD failure, PacketFence quarantine, and JumpServer session chain in the browser, then submits those already-normalized events through the real correlation, policy, and risk pipeline. It produces a correlated incident without real collector input. Without an Anthropic key, you can inspect the incident and use realtime updates; the dashboard cannot start its recommendation-driven response workflow because recommendations come from AI analysis.
 
-Set `ANTHROPIC_API_KEY` in `.env`, restart the API, open the synthetic incident, and explicitly request analysis to invoke the configured Anthropic model. A successful analysis exposes its recommended actions in the dashboard; submitting one creates an audit record, and privileged actions can then be approved or rejected as simulations. If the key is empty, the analysis request returns a clear `503 analysis_not_configured`; the deterministic incident demo remains functional, but the dashboard path is not fully end to end through analysis and response.
+Set `ANTHROPIC_API_KEY` in `.env`, restart the API, open the synthetic incident, and explicitly request analysis to invoke the configured Anthropic model. A successful analysis exposes its recommended actions in the dashboard; submitting one creates an audit record. Privileged actions require approval. With no PacketFence settings, quarantine remains the same simulation as before. It is real only when `PACKETFENCE_BASE_URL`, `PACKETFENCE_API_TOKEN`, and `PACKETFENCE_REAL_EXECUTION=true` are all set; the other seven handlers remain simulated. If the Anthropic key is empty, the analysis request returns a clear `503 analysis_not_configured`; the deterministic incident demo remains functional.
 
 This is a **local-config demo**, not a literal no-configuration startup: Compose intentionally refuses to start until the required local database, broker, API-key, and Grafana values referenced by `.env.example` exist. The API key is shared by the frontend and backend and is suitable only for this single-operator environment.
 
@@ -138,5 +138,6 @@ WardHound keeps deterministic security decisions separate from probabilistic exp
 - [ADR 0007](docs/adr/0007-incident-api-design.md) — incident API, in-memory stores, static-key auth, and realtime updates.
 - [ADR 0008](docs/adr/0008-observability-and-hardening.md) — bounded telemetry, tracing, metrics, and test hardening.
 - [ADR 0010](docs/adr/0010-auth0-identity-federation.md) — Auth0 federation, API permissions, and attributable response decisions.
+- [ADR 0011](docs/adr/0011-real-packetfence-integration.md) — safety-gated real PacketFence quarantine.
 
 See the [product specification](docs/SPEC.md), [roadmap](docs/ROADMAP.md), and [threat model](docs/THREAT_MODEL.md) for the wider design and explicitly deferred production work.
