@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from app.integrations.active_directory import ActiveDirectoryClient, ActiveDirectoryError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
@@ -153,6 +154,42 @@ class DisableUserHandler:
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _username(context)
+        ldap_url = os.getenv("AD_LDAP_URL", "").strip()
+        bind_dn = os.getenv("AD_BIND_DN", "").strip()
+        bind_password = os.getenv("AD_BIND_PASSWORD", "")
+        search_base_dn = os.getenv("AD_USER_SEARCH_BASE_DN", "").strip()
+        real_execution = os.getenv("AD_REAL_EXECUTION", "").strip().casefold() == "true"
+        if ldap_url and bind_dn and bind_password and search_base_dn and real_execution:
+            sam_account_name = _sam_account_name(context)
+            try:
+                client = ActiveDirectoryClient(
+                    ldap_url, bind_dn, bind_password, search_base_dn
+                )
+                outcome = await client.disable_user(sam_account_name)
+            except (ActiveDirectoryError, ValueError) as exc:
+                raise ActionExecutionError(
+                    str(exc),
+                    details={
+                        "integration": "active_directory",
+                        "operation": "disable_account",
+                        "mode": "real",
+                        "error": str(exc),
+                    },
+                ) from exc
+            state = "was already disabled" if outcome.already_disabled else "was disabled"
+            return SimulatedActionResult(
+                description=(
+                    f"Active Directory account {target} {state} and was confirmed disabled."
+                ),
+                target_identifier=target,
+                details={
+                    "integration": "active_directory",
+                    "operation": "disable_account",
+                    "mode": "real",
+                    "already_disabled": outcome.already_disabled,
+                    "disable_confirmed": True,
+                },
+            )
         return _result(
             f"Would disable Active Directory account {target}.",
             target,
@@ -425,6 +462,13 @@ def _username(context: ActionContext) -> str:
     for entity in context.entities:
         if entity.entity_type is EntityType.USER and entity.username:
             return entity.display_name
+    raise SimulationTargetError("user identifier is missing")
+
+
+def _sam_account_name(context: ActionContext) -> str:
+    for entity in context.entities:
+        if entity.entity_type is EntityType.USER and entity.username:
+            return entity.username
     raise SimulationTargetError("user identifier is missing")
 
 
