@@ -6,10 +6,16 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from app.api.auth import (
+    APPROVE_ACTIONS_PERMISSION,
+    REQUEST_ACTIONS_PERMISSION,
+    Auth0Principal,
+    require_auth0_principal,
+)
 from app.api.realtime import IncidentConnectionManager
 from app.api.services import ApiServices, get_api_services
 from app.engines.analysis import AnalysisConfigurationError
@@ -29,6 +35,14 @@ from app.stores.incidents import InMemoryEventStore, InMemoryIncidentStore
 
 API_KEY = "synthetic-dashboard-key"
 HEADERS = {"X-API-Key": API_KEY}
+APPROVER_SUBJECT = "auth0|synthetic-approver"
+
+
+async def authenticated_approver() -> Auth0Principal:
+    return Auth0Principal(
+        subject=APPROVER_SUBJECT,
+        permissions=frozenset({REQUEST_ACTIONS_PERMISSION, APPROVE_ACTIONS_PERMISSION}),
+    )
 
 
 class StaticAnalysisEngine:
@@ -65,6 +79,7 @@ def application(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     app = create_app()
     services = api_services()
     app.dependency_overrides[get_api_services] = lambda: services
+    app.dependency_overrides[require_auth0_principal] = authenticated_approver
     return app
 
 
@@ -287,17 +302,14 @@ def test_action_approve_reject_and_error_mapping(application: FastAPI) -> None:
         approved = client.post(
             f"/api/v1/actions/{record_id}/approve",
             headers=HEADERS,
-            json={"decided_by": "analyst-01"},
         )
         conflict = client.post(
             f"/api/v1/actions/{record_id}/approve",
             headers=HEADERS,
-            json={"decided_by": "analyst-01"},
         )
         missing = client.post(
             f"/api/v1/actions/{uuid4()}/approve",
             headers=HEADERS,
-            json={"decided_by": "analyst-01"},
         )
         second_request = client.post(
             f"/api/v1/incidents/{incident_id}/actions",
@@ -307,13 +319,14 @@ def test_action_approve_reject_and_error_mapping(application: FastAPI) -> None:
         rejected = client.post(
             f"/api/v1/actions/{second_request.json()['id']}/reject",
             headers=HEADERS,
-            json={"decided_by": "analyst-01", "reason": "Expected synthetic activity."},
+            json={"reason": "Expected synthetic activity."},
         )
 
     assert requested.status_code == 200
     assert requested.json()["approval_status"] == "pending"
     assert approved.status_code == 200
     assert approved.json()["execution_status"] == "simulated"
+    assert approved.json()["decided_by"] == APPROVER_SUBJECT
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "invalid_action_transition"
     assert missing.status_code == 404
@@ -357,7 +370,6 @@ def test_incident_actions_list_returns_latest_snapshots(application: FastAPI) ->
         client.post(
             f"/api/v1/actions/{record_id}/approve",
             headers=HEADERS,
-            json={"decided_by": "analyst-01"},
         )
         approved = client.get(
             f"/api/v1/incidents/{incident_id}/actions",
@@ -372,7 +384,7 @@ def test_incident_actions_list_returns_latest_snapshots(application: FastAPI) ->
         client.post(
             f"/api/v1/actions/{second_record_id}/reject",
             headers=HEADERS,
-            json={"decided_by": "analyst-01", "reason": "Expected synthetic activity."},
+            json={"reason": "Expected synthetic activity."},
         )
         final = client.get(
             f"/api/v1/incidents/{incident_id}/actions",
@@ -393,6 +405,47 @@ def test_incident_actions_list_returns_latest_snapshots(application: FastAPI) ->
     assert records_by_id[record_id]["approval_status"] == "approved"
     assert records_by_id[second_record_id]["approval_status"] == "rejected"
     assert records_by_id[second_record_id]["execution_status"] == "not_executed"
+
+
+def test_privileged_routes_enforce_verified_permissions(application: FastAPI) -> None:
+    async def analyst_principal() -> Auth0Principal:
+        return Auth0Principal(
+            subject="auth0|synthetic-analyst",
+            permissions=frozenset({REQUEST_ACTIONS_PERMISSION}),
+        )
+
+    action = {
+        "action_type": "disable_user",
+        "rationale": "Suspend the synthetic account pending operator review.",
+        "requires_approval": True,
+    }
+    application.dependency_overrides[require_auth0_principal] = analyst_principal
+    with TestClient(application) as client:
+        incident_id = ingest_one_incident(client)
+        requested = client.post(
+            f"/api/v1/incidents/{incident_id}/actions",
+            json=action,
+        )
+        rejected_approval = client.post(
+            f"/api/v1/actions/{requested.json()['id']}/approve",
+        )
+
+    assert requested.status_code == 200
+    assert rejected_approval.status_code == 403
+    assert rejected_approval.json()["detail"] == (
+        f"Missing required permission: {APPROVE_ACTIONS_PERMISSION}"
+    )
+
+
+def test_approver_route_rejects_unauthenticated_request(application: FastAPI) -> None:
+    async def unauthenticated() -> Auth0Principal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    application.dependency_overrides[require_auth0_principal] = unauthenticated
+    with TestClient(application) as client:
+        response = client.post(f"/api/v1/actions/{uuid4()}/approve")
+
+    assert response.status_code == 401
 
 
 def test_websocket_broadcasts_incident_creation(application: FastAPI) -> None:

@@ -47,22 +47,8 @@ class SortOrder(StrEnum):
     DESC = "desc"
 
 
-class ApprovalDecision(BaseModel):
-    """Operator identifier supplied when approving a response action."""
-
-    decided_by: str = Field(min_length=1)
-
-    @field_validator("decided_by")
-    @classmethod
-    def normalize_decided_by(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("decided_by must not be empty")
-        return normalized
-
-
-class RejectionDecision(ApprovalDecision):
-    """Operator identifier and rationale supplied when rejecting an action."""
+class RejectionDecision(BaseModel):
+    """Operator-supplied rationale for rejecting an action."""
 
     reason: str = Field(min_length=1)
 

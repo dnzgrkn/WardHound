@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14,<2",
     "anthropic>=0.116,<1",
+    "auth0-fastapi-api>=1.0.0b7,<2",
     "asyncpg>=0.30,<1",
     "celery[redis]>=5.4,<6",
     "fastapi>=0.115,<1",
@@ -60,3 +61,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "fastapi_plugin.*"
+ignore_missing_imports = true

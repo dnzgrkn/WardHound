@@ -10,11 +10,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 
-from app.api.auth import require_api_key
+from app.api.auth import Auth0Principal, require_analyst, require_api_key, require_approver
 from app.api.models import (
     AnalysisCompleted,
     ApiError,
-    ApprovalDecision,
     EventBatch,
     IncidentDetail,
     IncidentSortField,
@@ -52,11 +51,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1",
     tags=["incidents"],
-    dependencies=[Depends(require_api_key)],
 )
 
 
-@router.post("/events", response_model=list[Incident])
+@router.post(
+    "/events", response_model=list[Incident], dependencies=[Depends(require_api_key)]
+)
 async def ingest_events(batch: EventBatch, services: ApiServicesDependency) -> list[Incident]:
     """Run already-normalized events through the deterministic incident pipeline.
 
@@ -91,7 +91,9 @@ async def ingest_events(batch: EventBatch, services: ApiServicesDependency) -> l
     return incidents
 
 
-@router.get("/incidents", response_model=list[Incident])
+@router.get(
+    "/incidents", response_model=list[Incident], dependencies=[Depends(require_api_key)]
+)
 async def list_incidents(
     services: ApiServicesDependency,
     severity: Severity | None = None,
@@ -116,6 +118,7 @@ async def list_incidents(
 @router.get(
     "/incidents/{incident_id}",
     response_model=IncidentDetail,
+    dependencies=[Depends(require_api_key)],
     responses={status.HTTP_404_NOT_FOUND: {"model": ApiError}},
 )
 async def get_incident(
@@ -135,6 +138,7 @@ async def get_incident(
 @router.get(
     "/incidents/{incident_id}/actions",
     response_model=list[ActionAuditRecord],
+    dependencies=[Depends(require_api_key)],
     responses={status.HTTP_404_NOT_FOUND: {"model": ApiError}},
 )
 async def list_incident_actions(
@@ -149,6 +153,7 @@ async def list_incident_actions(
 @router.post(
     "/incidents/{incident_id}/analyze",
     response_model=RootCauseAnalysis,
+    dependencies=[Depends(require_api_key)],
     responses={
         status.HTTP_404_NOT_FOUND: {"model": ApiError},
         status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ApiError},
@@ -205,6 +210,7 @@ async def request_action(
     incident_id: UUID,
     action: RecommendedAction,
     services: ApiServicesDependency,
+    principal: Annotated[Auth0Principal, Depends(require_analyst)],
 ) -> ActionAuditRecord | JSONResponse:
     """Submit a typed recommendation to the existing simulated response engine."""
     incident = await services.incidents.get(incident_id)
@@ -233,12 +239,12 @@ async def request_action(
 )
 async def approve_action(
     record_id: UUID,
-    decision: ApprovalDecision,
     services: ApiServicesDependency,
+    principal: Annotated[Auth0Principal, Depends(require_approver)],
 ) -> ActionAuditRecord | JSONResponse:
     """Approve a pending response record and simulate its registered handler."""
     try:
-        record = await services.response_engine.approve(record_id, decision.decided_by)
+        record = await services.response_engine.approve(record_id, principal.subject)
     except ActionRecordNotFoundError as exc:
         return _error(status.HTTP_404_NOT_FOUND, "action_not_found", str(exc))
     except InvalidActionTransitionError as exc:
@@ -261,12 +267,13 @@ async def reject_action(
     record_id: UUID,
     decision: RejectionDecision,
     services: ApiServicesDependency,
+    principal: Annotated[Auth0Principal, Depends(require_approver)],
 ) -> ActionAuditRecord | JSONResponse:
     """Reject a pending response record without invoking its handler."""
     try:
         record = await services.response_engine.reject(
             record_id,
-            decision.decided_by,
+            principal.subject,
             decision.reason,
         )
     except ActionRecordNotFoundError as exc:
