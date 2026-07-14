@@ -54,11 +54,17 @@ In-memory store'lar (`InMemoryEventStore`, `InMemoryIncidentStore`, `InMemoryApp
 
 Statik API key hâlâ salt-okunur/demo yollarında (`POST /events`, incident okuma, action-history okuma, analiz, WebSocket) çalışıyor — `docker compose up` + Load demo hesap açmadan işlemeye devam ediyor. Ama response action talep etme (`request:actions`) ve onaylama/reddetme (`approve:actions`) artık gerçek Auth0 Bearer token + izin gerektiriyor; `decided_by` artık client'ın gönderdiği bir alan değil, doğrulanmış token'ın `sub` claim'inden geliyor. Dashboard Auth0'a Single Page Application olarak kayıtlı (Regular Web Application değil — bir React SPA client secret'ı güvenle saklayamaz). Detaylar: `docs/adr/0010-auth0-identity-federation.md`.
 
+## Aşama 11 — İlk Gerçek SOAR Entegrasyonu: PacketFence Quarantine (v2'nin üçüncü maddesi) ✅ tamamlandı
+
+Sekiz response action'dan yalnızca `QUARANTINE_DEVICE`, PacketFence'e karşı gerçek bir HTTP çağrısı yapabiliyor — diğer yedi handler hâlâ tamamen simüle. Gerçek yürütme dört bağımsız sinyal gerektiriyor: `PACKETFENCE_BASE_URL`, `PACKETFENCE_API_TOKEN`, `PACKETFENCE_ISOLATION_SECURITY_EVENT_ID`, ve `PACKETFENCE_REAL_EXECUTION=true` — herhangi biri eksikse handler bugüne kadarki simülasyon davranışına geri düşüyor, yani `docker compose up` + Load demo sıfır konfigürasyonla değişmeden çalışmaya devam ediyor.
+
+İlk implementasyonda ciddi bir doğruluk hatası vardı: `isolate_node`, PacketFence'in `POST /api/v1/nodes/bulk_deregister` endpoint'ini çağırıyordu — bu, cihazın kaydını tamamen siliyor (node'u "unregistered" durumuna getirip yeniden captive portal kaydına zorluyor), "isolated" durumuna geçirmiyor. Gerçek isolation, PacketFence'in security-event mekanizmasıyla tetikleniyor. Ayrı bir düzeltmeyle (`fix/packetfence-isolation-endpoint`) doğru endpoint'e (`PUT /api/v1/node/{mac}/apply_security_event`) geçildi, üçüncü bir zorunlu konfigürasyon sinyali (`PACKETFENCE_ISOLATION_SECURITY_EVENT_ID`) eklendi, ve gate'in dört sinyalin hiçbirini atlamadığını kanıtlayan parametrize testler yazıldı. Bu hata PacketFence'in gerçek controller kaynak kodu okunarak (`lib/pf/UnifiedApi/Controller/Nodes.pm`) tespit edildi — agent'ın kendi test suite'i bunu yakalamamıştı, çünkü testler yanlış endpoint'i doğru varsayarak mock'lanmıştı. Detaylar: `docs/adr/0011-real-packetfence-integration.md` ve amendment bölümü.
+
 ## v2 / Sonraki adımlar
 
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
-- **SOAR entegrasyonları:** Onaylanmış response taleplerini idempotent, gözlemlenebilir ve denetlenebilir harici playbook'lara aktarmak için planlandı.
+- **Kalan SOAR entegrasyonları:** Quarantine dışındaki yedi response action (disable user, block IP, close session, require MFA, notify administrator, create incident, require manual approval) hâlâ simülasyon — her biri kendi hedef sistemine karşı aynı safety-gate deseniyle (çoklu sinyal + insan onayı) tek tek gerçek hale getirilecek.
 
 ---
 
