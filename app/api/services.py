@@ -32,7 +32,7 @@ AnalysisEngineFactory = Callable[[], AnalysisEngine]
 
 @dataclass(frozen=True, slots=True)
 class ApiServices:
-    """Long-lived in-memory stores and engine adapters used by dashboard routes."""
+    """Long-lived store ports and engine adapters used by dashboard routes."""
 
     incidents: IncidentStore
     events: EventStore

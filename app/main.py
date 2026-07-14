@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.api.health import router as health_router
 from app.api.incidents import router as incident_router
@@ -17,11 +18,15 @@ from app.api.realtime import IncidentConnectionManager
 from app.api.services import ApiServices
 from app.api.websocket import router as websocket_router
 from app.engines.analysis import create_analysis_engine_from_env
-from app.engines.response import InMemoryApprovalStore, ResponseEngine
+from app.engines.response import ResponseEngine
 from app.observability.logging import configure_logging
 from app.observability.metrics import instrument_metrics
 from app.observability.tracing import instrument_tracing
-from app.stores.incidents import InMemoryEventStore, InMemoryIncidentStore
+from app.stores.postgres import (
+    PostgresApprovalStore,
+    PostgresEventStore,
+    PostgresIncidentStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +47,13 @@ def _cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize and release external service clients."""
-    database = create_async_engine(os.environ["DATABASE_URL"])
+    database = create_async_engine(os.environ["DATABASE_URL"], poolclass=NullPool)
     redis: Redis = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
     app.state.services = Services(database=database, redis=redis)
-    approval_store = InMemoryApprovalStore()
+    approval_store = PostgresApprovalStore(database)
     app.state.api_services = ApiServices(
-        incidents=InMemoryIncidentStore(),
-        events=InMemoryEventStore(),
+        incidents=PostgresIncidentStore(database),
+        events=PostgresEventStore(database),
         response_engine=ResponseEngine(approval_store),
         analysis_engine_factory=create_analysis_engine_from_env,
         connections=IncidentConnectionManager(),
