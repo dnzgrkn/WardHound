@@ -50,9 +50,12 @@ README (mermaid mimari diyagramı, kurulum, demo GIF), ADR'ları topla, anonimle
 
 In-memory store'lar (`InMemoryEventStore`, `InMemoryIncidentStore`, `InMemoryApprovalStore`) SQLAlchemy async modelleri, Alembic migration'ları ve Postgres-backed repository'lerle değiştirildi — restart sonrası incident, event, analiz ve approval geçmişi korunuyor, uçtan uca doğrulandı (`docker compose restart api` sonrası incident hâlâ erişilebilir). İlk implementasyonda `EventStore`/`IncidentStore`/`ApprovalStore` Protocol'leri senkron kalmıştı ve Postgres'e gerçek async I/O yaptırmak için her çağrıda yeni thread + yeni event loop açan bir shim kullanılmıştı — bu, event loop'u bloke edip API'yi eşzamanlı yük altında fiilen sıralı hale getiriyordu. Ayrı bir düzeltmeyle (`fix/async-store-protocols`) Protocol'ler native async yapıldı, shim tamamen kaldırıldı, ve eşzamanlı isteklerin gerçekten iç içe geçtiğini kanıtlayan bir regresyon testi eklendi. Detaylar: `docs/adr/0009-persistent-data-layer.md` ve amendment bölümü.
 
+## Aşama 10 — Auth0 Kimlik Federasyonu (v2'nin ikinci maddesi) ✅ tamamlandı
+
+Statik API key hâlâ salt-okunur/demo yollarında (`POST /events`, incident okuma, action-history okuma, analiz, WebSocket) çalışıyor — `docker compose up` + Load demo hesap açmadan işlemeye devam ediyor. Ama response action talep etme (`request:actions`) ve onaylama/reddetme (`approve:actions`) artık gerçek Auth0 Bearer token + izin gerektiriyor; `decided_by` artık client'ın gönderdiği bir alan değil, doğrulanmış token'ın `sub` claim'inden geliyor. Dashboard Auth0'a Single Page Application olarak kayıtlı (Regular Web Application değil — bir React SPA client secret'ı güvenle saklayamaz). Detaylar: `docs/adr/0010-auth0-identity-federation.md`.
+
 ## v2 / Sonraki adımlar
 
-- **Gerçek kimlik doğrulama ve yetkilendirme:** OIDC/JWT tabanlı kullanıcı kimliği ve response talep eden ile onaylayan rolleri ayırmak; kararları client-asserted etiket yerine doğrulanmış principal'a bağlamak için gerekli.
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
 - **SOAR entegrasyonları:** Onaylanmış response taleplerini idempotent, gözlemlenebilir ve denetlenebilir harici playbook'lara aktarmak için planlandı.
