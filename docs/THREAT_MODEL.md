@@ -59,6 +59,15 @@ also conceal an intrusion or manufacture misleading incidents.
   limited to `terminal.terminate_session`, rotate its token, and restrict WardHound egress to the
   management endpoint. WardHound treats kill-task acceptance as insufficient and confirms the
   session's `is_finished` state with a fresh read before recording success.
+- Duo verification pushes cross into the workforce MFA plane, which is separate from Auth0's
+  WardHound-operator identity boundary. A compromised Admin API secret could enumerate users and
+  generate unsolicited pushes, enabling notification fatigue or social-engineering attempts. Real
+  execution requires a Duo hostname, integration and secret keys, and the independent
+  `DUO_REAL_EXECUTION=true` flag, plus human approval. WardHound sends one verification push per
+  action and reports success only after Duo returns an approved result and a fresh user read remains
+  active and enrolled. Use a dedicated Admin API integration limited to required resource access,
+  rotate both keys, restrict egress to the configured Duo hostname, and alert on unusual push
+  volume. This operation does not disable users or reset every remembered-device session.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and
