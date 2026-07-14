@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.integrations.active_directory import ActiveDirectoryClient, ActiveDirectoryError
 from app.integrations.firepower import FirepowerClient, FirepowerError
+from app.integrations.jumpserver import JumpServerClient, JumpServerError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
@@ -256,6 +257,38 @@ class CloseSessionHandler:
     ) -> SimulatedActionResult:
         if context.session_id is None:
             raise SimulationTargetError("JumpServer session identifier is missing")
+        base_url = os.getenv("JUMPSERVER_BASE_URL", "").strip()
+        api_token = os.getenv("JUMPSERVER_API_TOKEN", "").strip()
+        real_execution = (
+            os.getenv("JUMPSERVER_REAL_EXECUTION", "").strip().casefold() == "true"
+        )
+        if base_url and api_token and real_execution:
+            try:
+                async with JumpServerClient(base_url, api_token) as client:
+                    outcome = await client.terminate_session(context.session_id)
+            except (JumpServerError, ValueError) as exc:
+                details: dict[str, object] = {
+                    "integration": "jumpserver",
+                    "operation": "terminate_session",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if isinstance(exc, JumpServerError) and exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            return SimulatedActionResult(
+                description=(
+                    f"JumpServer session {context.session_id} was confirmed terminated."
+                ),
+                target_identifier=context.session_id,
+                details={
+                    "integration": "jumpserver",
+                    "operation": "terminate_session",
+                    "mode": "real",
+                    "termination_confirmed": outcome.termination_confirmed,
+                    "is_finished": True,
+                },
+            )
         return _result(
             f"Would terminate JumpServer session {context.session_id}.",
             context.session_id,

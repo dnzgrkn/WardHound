@@ -9,6 +9,7 @@ from ldap3 import MOCK_SYNC, Connection, Server
 import app.engines.response as response_module
 from app.engines.response import (
     BlockIpHandler,
+    CloseSessionHandler,
     DisableUserHandler,
     InMemoryApprovalStore,
     QuarantineDeviceHandler,
@@ -22,6 +23,10 @@ from app.integrations.active_directory import (
     DisableAccountResult,
 )
 from app.integrations.firepower import BlockIpResult, FirepowerError
+from app.integrations.jumpserver import (
+    JumpServerError,
+    TerminateSessionResult,
+)
 from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import (
@@ -104,6 +109,27 @@ class StubFirepowerClient:
         if self.error is not None:
             raise self.error
         return BlockIpResult(already_blocked=False)
+
+
+class StubJumpServerClient:
+    calls: list[str] = []
+    error: JumpServerError | None = None
+
+    def __init__(self, base_url: str, api_token: str) -> None:
+        assert base_url == "https://jumpserver.corp.example.com"
+        assert api_token == "synthetic-api-token"
+
+    async def __aenter__(self) -> StubJumpServerClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def terminate_session(self, session_id: str) -> TerminateSessionResult:
+        self.calls.append(session_id)
+        if self.error is not None:
+            raise self.error
+        return TerminateSessionResult()
 
 
 BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
@@ -608,3 +634,77 @@ async def test_fmc_failure_becomes_explainable_audit_record(
     assert record.result is not None
     assert record.result.details["mode"] == "real"
     assert record.result.details["status_code"] == 422
+
+
+@pytest.mark.parametrize(
+    "missing_variable",
+    [
+        "JUMPSERVER_BASE_URL",
+        "JUMPSERVER_API_TOKEN",
+        "JUMPSERVER_REAL_EXECUTION",
+        None,
+    ],
+)
+async def test_jumpserver_execution_gate_requires_all_three_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_variable: str | None,
+) -> None:
+    monkeypatch.setattr(response_module, "JumpServerClient", StubJumpServerClient)
+    configuration = {
+        "JUMPSERVER_BASE_URL": "https://jumpserver.corp.example.com",
+        "JUMPSERVER_API_TOKEN": "synthetic-api-token",
+        "JUMPSERVER_REAL_EXECUTION": "true",
+    }
+    for name, value in configuration.items():
+        monkeypatch.setenv(name, value)
+    if missing_variable is not None:
+        if missing_variable == "JUMPSERVER_REAL_EXECUTION":
+            monkeypatch.setenv(missing_variable, "false")
+        else:
+            monkeypatch.delenv(missing_variable)
+    StubJumpServerClient.calls = []
+    StubJumpServerClient.error = None
+    incident, event = incident_and_evidence()
+
+    result = await CloseSessionHandler().simulate(
+        action(ResponseActionType.CLOSE_SESSION, requires_approval=True),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    expected_mode = "real" if missing_variable is None else "simulation"
+    assert result.details["mode"] == expected_mode
+    assert StubJumpServerClient.calls == (
+        ["session-synthetic-0042"] if expected_mode == "real" else []
+    )
+    if expected_mode == "real":
+        assert result.details["operation"] == "terminate_session"
+        assert result.details["termination_confirmed"] is True
+        assert result.details["is_finished"] is True
+
+
+async def test_jumpserver_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "JumpServerClient", StubJumpServerClient)
+    monkeypatch.setenv("JUMPSERVER_BASE_URL", "https://jumpserver.corp.example.com")
+    monkeypatch.setenv("JUMPSERVER_API_TOKEN", "synthetic-api-token")
+    monkeypatch.setenv("JUMPSERVER_REAL_EXECUTION", "true")
+    StubJumpServerClient.calls = []
+    StubJumpServerClient.error = JumpServerError(
+        "JumpServer session termination returned HTTP 403", status_code=403
+    )
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.CLOSE_SESSION, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["status_code"] == 403
