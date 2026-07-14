@@ -23,7 +23,7 @@ class PacketFenceIsolationResult:
     """Safe subset of the PacketFence response retained in the audit trail."""
 
     status_code: int
-    node_status: str | None
+    security_event_record_id: int
 
 
 class PacketFenceClient:
@@ -50,12 +50,14 @@ class PacketFenceClient:
     async def __aexit__(self, *args: object) -> None:
         await self._client.aclose()
 
-    async def isolate_node(self, mac_address: str) -> PacketFenceIsolationResult:
-        """Deregister one node so PacketFence moves it to isolated access."""
+    async def isolate_node(
+        self, mac_address: str, security_event_id: str
+    ) -> PacketFenceIsolationResult:
+        """Force the configured isolation security event for one node."""
         try:
-            response = await self._client.post(
-                "/api/v1/nodes/bulk_deregister",
-                json={"items": [mac_address]},
+            response = await self._client.put(
+                f"/api/v1/node/{mac_address}/apply_security_event",
+                json={"security_event_id": security_event_id},
             )
         except httpx.TimeoutException as exc:
             raise PacketFenceError("PacketFence isolation request timed out") from exc
@@ -68,31 +70,21 @@ class PacketFenceClient:
                 status_code=response.status_code,
             )
 
-        return PacketFenceIsolationResult(
-            status_code=response.status_code,
-            node_status=_node_status(response, mac_address),
-        )
+        record_id = _security_event_record_id(response)
+        if record_id is None:
+            raise PacketFenceError(
+                "PacketFence isolation response did not return a security event id",
+                status_code=response.status_code,
+            )
+        return PacketFenceIsolationResult(response.status_code, record_id)
 
 
-def _node_status(response: httpx.Response, mac_address: str) -> str | None:
+def _security_event_record_id(response: httpx.Response) -> int | None:
     try:
         payload: Any = response.json()
     except ValueError:
         return None
     if not isinstance(payload, dict):
         return None
-    items = payload.get("items")
-    if not isinstance(items, list):
-        return None
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        item_mac = item.get("mac")
-        status = item.get("status")
-        if (
-            isinstance(item_mac, str)
-            and item_mac.casefold() == mac_address.casefold()
-            and isinstance(status, str)
-        ):
-            return status
-    return None
+    record_id = payload.get("id")
+    return record_id if isinstance(record_id, int) and record_id > 0 else None

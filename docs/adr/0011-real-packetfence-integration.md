@@ -65,3 +65,32 @@ roles permit it, protect and rotate the token, and test against non-production n
 The existing `ExecutionStatus.SIMULATED` enum remains the coarse successful-handler state because
 schema changes are outside this stage. Consumers must use `result.details.mode` to distinguish real
 from simulated success; the API and persisted audit payload always include that explicit label.
+
+## Amendment (security-event-driven isolation)
+
+The original implementation incorrectly equated deregistration with isolation. PacketFence's
+`bulk_deregister` controller calls `node_deregister($mac)`, changes registration state, and sends a
+device back through registration. It does not select an isolation role. This also contradicted the
+collector read path, which recognizes quarantine when the node category contains `isolat` or
+`quarant`, independently of registration status.
+
+WardHound now uses the current PacketFence OpenAPI single-node operation:
+`PUT /api/v1/node/{mac}/apply_security_event` with
+`{"security_event_id": "<configured id>"}`. Although the initial fix prompt described this route as
+POST, PacketFence's published OpenAPI declares PUT. The server controller obtains the node MAC from
+the route, calls `security_event_add($mac, $security_event_id, force => TRUE)`, and returns the
+positive security-event record ID as `{"id": <id>}`; otherwise it returns an error. That security
+event drives PacketFence enforcement and role/VLAN reassignment. WardHound therefore treats a 2xx
+response with a positive returned `id` as accepted and no longer interprets `unreg` as isolation.
+
+The tenant must identify which configured PacketFence security event represents isolation.
+`PACKETFENCE_ISOLATION_SECURITY_EVENT_ID` is consequently a third configuration signal in addition
+to the connection settings and the independent execution flag. Real execution requires a non-empty
+base URL, API token, isolation security-event ID, and `PACKETFENCE_REAL_EXECUTION=true`; every other
+combination remains simulated. Audit operation names are `apply_security_event`, and real results
+retain the HTTP status and returned security-event record ID without storing the configured ID or
+response body.
+
+Least-privilege guidance is correspondingly corrected: the PacketFence API identity should be
+restricted to applying the designated security event rather than node deregistration wherever API
+role granularity permits.

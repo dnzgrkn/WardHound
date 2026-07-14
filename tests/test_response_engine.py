@@ -27,7 +27,7 @@ from app.schemas.response import ApprovalStatus, ExecutionStatus
 
 
 class StubPacketFenceClient:
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
     error: PacketFenceError | None = None
 
     def __init__(self, base_url: str, api_token: str) -> None:
@@ -40,11 +40,13 @@ class StubPacketFenceClient:
     async def __aexit__(self, *args: object) -> None:
         return None
 
-    async def isolate_node(self, mac_address: str) -> PacketFenceIsolationResult:
-        self.calls.append(mac_address)
+    async def isolate_node(
+        self, mac_address: str, security_event_id: str
+    ) -> PacketFenceIsolationResult:
+        self.calls.append((mac_address, security_event_id))
         if self.error is not None:
             raise self.error
-        return PacketFenceIsolationResult(status_code=200, node_status="unreg")
+        return PacketFenceIsolationResult(status_code=200, security_event_record_id=42)
 
 
 def incident_and_evidence() -> tuple[Incident, NormalizedEvent]:
@@ -242,29 +244,37 @@ async def test_malformed_target_is_a_failed_simulation() -> None:
 
 
 @pytest.mark.parametrize(
-    ("configured", "real_execution", "expected_mode"),
+    ("connection_configured", "event_configured", "real_execution", "expected_mode"),
     [
-        (False, False, "simulation"),
-        (False, True, "simulation"),
-        (True, False, "simulation"),
-        (True, True, "real"),
+        (False, False, False, "simulation"),
+        (False, True, True, "simulation"),
+        (True, False, True, "simulation"),
+        (True, True, False, "simulation"),
+        (True, True, True, "real"),
     ],
 )
-async def test_packetfence_two_signal_gate(
+async def test_packetfence_execution_gate_requires_all_configuration(
     monkeypatch: pytest.MonkeyPatch,
-    configured: bool,
+    connection_configured: bool,
+    event_configured: bool,
     real_execution: bool,
     expected_mode: str,
 ) -> None:
     monkeypatch.setattr(response_module, "PacketFenceClient", StubPacketFenceClient)
     StubPacketFenceClient.calls = []
     StubPacketFenceClient.error = None
-    if configured:
+    if connection_configured:
         monkeypatch.setenv("PACKETFENCE_BASE_URL", "https://10.20.30.40:9999")
         monkeypatch.setenv("PACKETFENCE_API_TOKEN", "synthetic-api-token")
     else:
         monkeypatch.delenv("PACKETFENCE_BASE_URL", raising=False)
         monkeypatch.delenv("PACKETFENCE_API_TOKEN", raising=False)
+    if event_configured:
+        monkeypatch.setenv(
+            "PACKETFENCE_ISOLATION_SECURITY_EVENT_ID", "synthetic-isolation-event"
+        )
+    else:
+        monkeypatch.delenv("PACKETFENCE_ISOLATION_SECURITY_EVENT_ID", raising=False)
     monkeypatch.setenv("PACKETFENCE_REAL_EXECUTION", str(real_execution).lower())
     incident, event = incident_and_evidence()
 
@@ -276,11 +286,13 @@ async def test_packetfence_two_signal_gate(
 
     assert result.details["mode"] == expected_mode
     assert StubPacketFenceClient.calls == (
-        ["AA:BB:CC:DD:EE:FF"] if expected_mode == "real" else []
+        [("AA:BB:CC:DD:EE:FF", "synthetic-isolation-event")]
+        if expected_mode == "real"
+        else []
     )
     if expected_mode == "real":
         assert result.details["status_code"] == 200
-        assert result.details["node_status"] == "unreg"
+        assert result.details["security_event_record_id"] == 42
         assert result.details["isolation_confirmed"] is True
 
 
@@ -290,6 +302,9 @@ async def test_packetfence_failure_becomes_explainable_audit_record(
     monkeypatch.setattr(response_module, "PacketFenceClient", StubPacketFenceClient)
     monkeypatch.setenv("PACKETFENCE_BASE_URL", "https://10.20.30.40:9999")
     monkeypatch.setenv("PACKETFENCE_API_TOKEN", "synthetic-api-token")
+    monkeypatch.setenv(
+        "PACKETFENCE_ISOLATION_SECURITY_EVENT_ID", "synthetic-isolation-event"
+    )
     monkeypatch.setenv("PACKETFENCE_REAL_EXECUTION", "true")
     StubPacketFenceClient.calls = []
     StubPacketFenceClient.error = PacketFenceError(

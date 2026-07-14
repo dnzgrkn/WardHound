@@ -109,15 +109,16 @@ class QuarantineDeviceHandler:
         target = _device_mac(context)
         base_url = os.getenv("PACKETFENCE_BASE_URL", "").strip()
         api_token = os.getenv("PACKETFENCE_API_TOKEN", "").strip()
+        security_event_id = os.getenv("PACKETFENCE_ISOLATION_SECURITY_EVENT_ID", "").strip()
         real_execution = os.getenv("PACKETFENCE_REAL_EXECUTION", "").strip().casefold() == "true"
-        if base_url and api_token and real_execution:
+        if base_url and api_token and security_event_id and real_execution:
             try:
                 async with PacketFenceClient(base_url, api_token) as client:
-                    outcome = await client.isolate_node(target)
+                    outcome = await client.isolate_node(target, security_event_id)
             except PacketFenceError as exc:
                 details: dict[str, object] = {
                     "integration": "packetfence",
-                    "operation": "isolate_node",
+                    "operation": "apply_security_event",
                     "mode": "real",
                     "error": str(exc),
                 }
@@ -126,13 +127,12 @@ class QuarantineDeviceHandler:
                 raise ActionExecutionError(str(exc), details=details) from exc
             details = {
                 "integration": "packetfence",
-                "operation": "isolate_node",
+                "operation": "apply_security_event",
                 "mode": "real",
                 "status_code": outcome.status_code,
-                "isolation_confirmed": outcome.node_status == "unreg",
+                "security_event_record_id": outcome.security_event_record_id,
+                "isolation_confirmed": True,
             }
-            if outcome.node_status is not None:
-                details["node_status"] = outcome.node_status
             return SimulatedActionResult(
                 description=f"PacketFence isolated MAC {target}.",
                 target_identifier=target,
@@ -142,7 +142,7 @@ class QuarantineDeviceHandler:
             f"Would set PacketFence node status to isolated for MAC {target}.",
             target,
             integration="packetfence",
-            operation="isolate_node",
+            operation="apply_security_event",
         )
 
 
