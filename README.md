@@ -90,6 +90,37 @@ npm run dev
 
 Frontend quality commands are `npm run lint`, `npm run typecheck`, `npm run test:run`, and `npm run build`.
 
+### Identity setup
+
+Auth0 is optional for loading and viewing the zero-account demo. Without Auth0 configuration, the
+static `WARDHOUND_API_KEY` still authorizes demo event ingestion, incident reads, on-demand
+analysis, action-history reads, and realtime WebSocket notifications. Requesting, approving, or
+rejecting a response action requires an Auth0 access token.
+
+To enable privileged actions on an Auth0 free-tier tenant:
+
+1. In **Applications → APIs**, create an API named `WardHound API`. Use a URI-style identifier such
+   as `https://wardhound-api.example` and keep the signing algorithm at RS256. Enable **RBAC** and
+   **Add Permissions in the Access Token**.
+2. Add API permissions `request:actions` and `approve:actions`.
+3. In **User Management → Roles**, create an `analyst` role with `request:actions`. Create an
+   `approver` role with both permissions, then assign test users to the appropriate role.
+4. In **Applications → Applications**, create a **Single Page Application** for the React
+   dashboard. The Auth0 React SDK is a public browser client and must not use a client secret; a
+   Regular Web Application is not appropriate without a server-side backend-for-frontend.
+5. Configure Allowed Callback URLs, Allowed Logout URLs, and Allowed Web Origins as
+   `http://localhost:3000`. Copy the application Client ID and tenant domain.
+6. Set `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, and `AUTH0_CLIENT_ID` in the root `.env`. Compose passes
+   the public values to the frontend as `VITE_AUTH0_DOMAIN`, `VITE_AUTH0_AUDIENCE`, and
+   `VITE_AUTH0_CLIENT_ID`. For standalone frontend development, set those `VITE_` values in
+   `frontend/.env.local` using `frontend/.env.example` as the template.
+
+The domain value excludes `https://`; the audience must exactly match the API identifier. No Auth0
+client secret belongs in either frontend environment or source control. These steps follow Auth0's
+[FastAPI API quickstart](https://auth0.com/docs/quickstart/backend/fastapi),
+[React SPA quickstart](https://auth0.com/docs/quickstart/spa/react), and
+[Core RBAC guidance](https://auth0.com/docs/manage-users/access-control/configure-core-rbac/roles).
+
 ## Validation case study
 
 WardHound's collector formats and investigation workflow were validated against sanitized PacketFence NAC, JumpServer PAM, and Active Directory Tiering event data from a mid-sized enterprise Zero Trust engagement. No client identity or production identifier is included in this repository. The concrete evidence chains and outcomes are documented in the [anonymized case study](docs/CASE_STUDY.md).
@@ -106,5 +137,6 @@ WardHound keeps deterministic security decisions separate from probabilistic exp
 - [ADR 0006](docs/adr/0006-response-engine-design.md) — approval workflow and simulation-only response boundary.
 - [ADR 0007](docs/adr/0007-incident-api-design.md) — incident API, in-memory stores, static-key auth, and realtime updates.
 - [ADR 0008](docs/adr/0008-observability-and-hardening.md) — bounded telemetry, tracing, metrics, and test hardening.
+- [ADR 0010](docs/adr/0010-auth0-identity-federation.md) — Auth0 federation, API permissions, and attributable response decisions.
 
 See the [product specification](docs/SPEC.md), [roadmap](docs/ROADMAP.md), and [threat model](docs/THREAT_MODEL.md) for the wider design and explicitly deferred production work.

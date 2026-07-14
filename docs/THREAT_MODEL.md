@@ -8,12 +8,13 @@ also conceal an intrusion or manufacture misleading incidents.
 
 ## Trust boundaries and primary risks
 
-- The dashboard API currently uses one static `WARDHOUND_API_KEY`. Leakage grants the bearer read
-  access to all retained incidents and evidence and the ability to submit, approve, or reject
-  response actions as a trusted operator. The response engine still enforces approval for
-  privileged actions, but a stolen key lets the attacker impersonate the approver, so the gate is
-  not an independent authentication factor. Production needs per-user identity, short-lived
-  credentials, role separation, revocation, and attributable approval records.
+- The static `WARDHOUND_API_KEY` remains a zero-account demo credential. Leakage grants read access
+  to retained incidents and evidence, synthetic demo ingestion, analysis requests, action-history
+  reads, and realtime notifications. It cannot request, approve, or reject response actions: those
+  routes require a short-lived Auth0 access token with API-specific permissions, and decisions are
+  attributed to the verified token subject. The shared key still exposes sensitive evidence and
+  can consume correlation, AI-provider, storage, and realtime capacity, so it requires rotation,
+  rate limits, TLS, and eventual replacement with identity-aware access for non-demo deployments.
 - Collector input crosses from independently managed security systems into WardHound. A
   compromised source can send false evidence, exhaust storage or correlation capacity, and embed
   prompt-injection text in fields later included in an AI prompt. Structured output validation and
