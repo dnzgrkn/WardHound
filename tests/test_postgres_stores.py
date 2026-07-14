@@ -59,7 +59,9 @@ def postgres_engine() -> Iterator[AsyncEngine]:
     asyncio.run(engine.dispose())
 
 
-def test_records_survive_fresh_repository_instances(postgres_engine: AsyncEngine) -> None:
+async def test_records_survive_fresh_repository_instances(
+    postgres_engine: AsyncEngine,
+) -> None:
     start = datetime(2026, 7, 14, 9, tzinfo=UTC)
     user = NormalizedEntity(entity_type=EntityType.USER, username="jdoe", domain="CORP")
     first_event = NormalizedEvent(
@@ -109,25 +111,28 @@ def test_records_survive_fresh_repository_instances(postgres_engine: AsyncEngine
     event_store: EventStore = PostgresEventStore(postgres_engine)
     incident_store: IncidentStore = PostgresIncidentStore(postgres_engine)
     approval_store: ApprovalStore = PostgresApprovalStore(postgres_engine)
-    event_store.add_all([first_event, second_event])
-    assert incident_store.upsert(incident) is True
-    incident_store.save_analysis(incident.id, analysis)
-    approval_store.append(action)
+    await event_store.add_all([first_event, second_event])
+    assert await incident_store.upsert(incident) is True
+    await incident_store.save_analysis(incident.id, analysis)
+    await approval_store.append(action)
 
     fresh_events: EventStore = PostgresEventStore(postgres_engine)
     fresh_incidents: IncidentStore = PostgresIncidentStore(postgres_engine)
     fresh_approvals: ApprovalStore = PostgresApprovalStore(postgres_engine)
 
-    assert fresh_events.get_many([second_event.id, first_event.id]) == [
+    assert await fresh_events.get_many([second_event.id, first_event.id]) == [
         second_event,
         first_event,
     ]
-    assert {event.id for event in fresh_events.get_all()} >= {first_event.id, second_event.id}
-    assert fresh_incidents.get(incident.id) == incident
-    assert fresh_incidents.get_analysis(incident.id) == analysis
-    assert fresh_approvals.get(action.id) == action
-    assert fresh_approvals.history(action.id) == (action,)
-    assert fresh_approvals.list_for_incident(incident.id) == [action]
+    assert {event.id for event in await fresh_events.get_all()} >= {
+        first_event.id,
+        second_event.id,
+    }
+    assert await fresh_incidents.get(incident.id) == incident
+    assert await fresh_incidents.get_analysis(incident.id) == analysis
+    assert await fresh_approvals.get(action.id) == action
+    assert await fresh_approvals.history(action.id) == (action,)
+    assert await fresh_approvals.list_for_incident(incident.id) == [action]
 
     async def clean_up() -> None:
         async with postgres_engine.begin() as connection:
@@ -143,4 +148,4 @@ def test_records_survive_fresh_repository_instances(postgres_engine: AsyncEngine
                 )
             )
 
-    asyncio.run(clean_up())
+    await clean_up()

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.api.realtime import IncidentConnectionManager
 from app.api.services import ApiServices, get_api_services
@@ -147,6 +149,53 @@ def test_correlation_spans_separate_ingestion_requests(application: FastAPI) -> 
     assert {event.id for event in events} == {
         UUID(event_id) for event_id in incidents[0]["event_ids"]
     }
+
+
+async def test_concurrent_ingestion_requests_overlap_store_operations(
+    application: FastAPI,
+) -> None:
+    class OverlapTrackingEventStore(InMemoryEventStore):
+        def __init__(self, expected_concurrency: int) -> None:
+            super().__init__()
+            self.expected_concurrency = expected_concurrency
+            self.active = 0
+            self.maximum_active = 0
+            self.all_entered = asyncio.Event()
+
+        async def add_all(self, events: Iterable[NormalizedEvent]) -> None:
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+            if self.active == self.expected_concurrency:
+                self.all_entered.set()
+            try:
+                await asyncio.wait_for(self.all_entered.wait(), timeout=1)
+                await super().add_all(events)
+            finally:
+                self.active -= 1
+
+    concurrent_requests = 3
+    tracking_events = OverlapTrackingEventStore(concurrent_requests)
+    services = api_services()
+    services = ApiServices(
+        incidents=services.incidents,
+        events=tracking_events,
+        response_engine=services.response_engine,
+        analysis_engine_factory=services.analysis_engine_factory,
+        connections=services.connections,
+    )
+    application.dependency_overrides[get_api_services] = lambda: services
+    transport = ASGITransport(app=application)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        responses = await asyncio.gather(
+            *(
+                client.post("/api/v1/events", headers=HEADERS, json=event_payload())
+                for _ in range(concurrent_requests)
+            )
+        )
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    assert tracking_events.maximum_active == concurrent_requests
 
 
 def test_api_key_is_required(application: FastAPI) -> None:

@@ -74,11 +74,11 @@ def action(action_type: ResponseActionType, requires_approval: bool) -> Recommen
     )
 
 
-def test_privileged_action_waits_for_approval_before_simulation() -> None:
+async def test_privileged_action_waits_for_approval_before_simulation() -> None:
     incident, event = incident_and_evidence()
     store = InMemoryApprovalStore()
     engine = ResponseEngine(store)
-    requested = engine.request_action(
+    requested = await engine.request_action(
         action(ResponseActionType.QUARANTINE_DEVICE, requires_approval=True),
         incident.id,
         action_context_from_incident(incident, [event]),
@@ -88,25 +88,25 @@ def test_privileged_action_waits_for_approval_before_simulation() -> None:
     assert requested.execution_status is ExecutionStatus.NOT_EXECUTED
     assert requested.result is None
 
-    approved = engine.approve(requested.id, decided_by="analyst-01")
+    approved = await engine.approve(requested.id, decided_by="analyst-01")
 
     assert approved.approval_status is ApprovalStatus.APPROVED
     assert approved.execution_status is ExecutionStatus.SIMULATED
     assert approved.result is not None
     assert "AA:BB:CC:DD:EE:FF" in approved.result.description
     assert requested.execution_status is ExecutionStatus.NOT_EXECUTED
-    assert [snapshot.execution_status for snapshot in store.history(requested.id)] == [
+    assert [snapshot.execution_status for snapshot in await store.history(requested.id)] == [
         ExecutionStatus.NOT_EXECUTED,
         ExecutionStatus.NOT_EXECUTED,
         ExecutionStatus.SIMULATED,
     ]
 
 
-def test_non_privileged_action_is_auto_approved_and_simulated() -> None:
+async def test_non_privileged_action_is_auto_approved_and_simulated() -> None:
     incident, event = incident_and_evidence()
     engine = ResponseEngine(InMemoryApprovalStore())
 
-    record = engine.request_action(
+    record = await engine.request_action(
         action(ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False),
         incident.id,
         action_context_from_incident(incident, [event]),
@@ -118,14 +118,14 @@ def test_non_privileged_action_is_auto_approved_and_simulated() -> None:
     assert record.result.details["mode"] == "simulation"
 
 
-def test_rejection_never_executes_handler() -> None:
+async def test_rejection_never_executes_handler() -> None:
     store = InMemoryApprovalStore()
     engine = ResponseEngine(store)
-    requested = engine.request_action(
+    requested = await engine.request_action(
         action(ResponseActionType.DISABLE_USER, requires_approval=True)
     )
 
-    rejected = engine.reject(
+    rejected = await engine.reject(
         requested.id,
         decided_by="analyst-01",
         reason="The synthetic activity was expected.",
@@ -135,10 +135,10 @@ def test_rejection_never_executes_handler() -> None:
     assert rejected.execution_status is ExecutionStatus.NOT_EXECUTED
     assert rejected.result is None
     assert rejected.reason == "The synthetic activity was expected."
-    assert len(store.history(requested.id)) == 2
+    assert len(await store.history(requested.id)) == 2
 
 
-def test_engine_defensively_gates_constructed_privileged_bypass() -> None:
+async def test_engine_defensively_gates_constructed_privileged_bypass() -> None:
     bypass = RecommendedAction.model_construct(
         action_type=ResponseActionType.BLOCK_IP,
         rationale="Attempt to bypass schema validation in a synthetic test.",
@@ -146,7 +146,7 @@ def test_engine_defensively_gates_constructed_privileged_bypass() -> None:
     )
     engine = ResponseEngine(InMemoryApprovalStore())
 
-    record = engine.request_action(bypass)
+    record = await engine.request_action(bypass)
 
     assert record.approval_status is ApprovalStatus.PENDING
     assert record.execution_status is ExecutionStatus.NOT_EXECUTED
@@ -155,7 +155,7 @@ def test_engine_defensively_gates_constructed_privileged_bypass() -> None:
 
 
 @pytest.mark.parametrize("action_type", sorted(RecommendedAction.PRIVILEGED_ACTIONS))
-def test_every_constructed_privileged_action_is_defensively_gated(
+async def test_every_constructed_privileged_action_is_defensively_gated(
     action_type: ResponseActionType,
 ) -> None:
     bypass = RecommendedAction.model_construct(
@@ -164,7 +164,7 @@ def test_every_constructed_privileged_action_is_defensively_gated(
         requires_approval=False,
     )
 
-    record = ResponseEngine(InMemoryApprovalStore()).request_action(bypass)
+    record = await ResponseEngine(InMemoryApprovalStore()).request_action(bypass)
 
     assert record.approval_status is ApprovalStatus.PENDING
     assert record.execution_status is ExecutionStatus.NOT_EXECUTED
@@ -184,19 +184,19 @@ def test_every_constructed_privileged_action_is_defensively_gated(
         (ResponseActionType.REQUIRE_MANUAL_APPROVAL, "manual-approval checkpoint"),
     ],
 )
-def test_every_action_type_has_a_sane_simulated_handler(
+async def test_every_action_type_has_a_sane_simulated_handler(
     action_type: ResponseActionType, expected_text: str
 ) -> None:
     incident, event = incident_and_evidence()
     engine = ResponseEngine(InMemoryApprovalStore())
     requires_approval = action_type in RecommendedAction.PRIVILEGED_ACTIONS
-    record = engine.request_action(
+    record = await engine.request_action(
         action(action_type, requires_approval=requires_approval),
         incident.id,
         action_context_from_incident(incident, [event]),
     )
     if record.approval_status is ApprovalStatus.PENDING:
-        record = engine.approve(record.id, decided_by="analyst-01")
+        record = await engine.approve(record.id, decided_by="analyst-01")
 
     assert record.execution_status is ExecutionStatus.SIMULATED
     assert record.result is not None
@@ -204,13 +204,13 @@ def test_every_action_type_has_a_sane_simulated_handler(
     assert record.result.details["mode"] == "simulation"
 
 
-def test_malformed_target_is_a_failed_simulation() -> None:
+async def test_malformed_target_is_a_failed_simulation() -> None:
     engine = ResponseEngine(InMemoryApprovalStore())
-    requested = engine.request_action(
+    requested = await engine.request_action(
         action(ResponseActionType.QUARANTINE_DEVICE, requires_approval=True)
     )
 
-    record = engine.approve(requested.id, decided_by="analyst-01")
+    record = await engine.approve(requested.id, decided_by="analyst-01")
 
     assert record.execution_status is ExecutionStatus.FAILED
     assert record.result is not None
