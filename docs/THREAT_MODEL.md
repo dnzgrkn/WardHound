@@ -32,6 +32,16 @@ also conceal an intrusion or manufacture misleading incidents.
   endpoint, and keep the flag false while validating configuration. Deployments that cannot scope
   the identity accept a larger blast radius and should isolate this integration until compensating
   controls are in place.
+- Active Directory account disablement has a broader blast radius than PacketFence network
+  isolation: disabling an identity can revoke email, SSO, VPN, PAM, and downstream application
+  access at once. A compromised bind identity can also lock out many eligible users. Real execution
+  requires an LDAPS URL, bind DN and password, one user search base, and the independent
+  `AD_REAL_EXECUTION=true` flag, in addition to human approval. The bind identity must never be a
+  Domain Admin or equivalent; delegate only the right to update `userAccountControl` on explicitly
+  eligible user OUs, restrict the configured search base to those OUs, protect and rotate the
+  password, and alert on use of that identity. WardHound confirms the disabled bit with a fresh read
+  after modification, but this does not reduce the authorization blast radius of excessive LDAP
+  privileges.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and
