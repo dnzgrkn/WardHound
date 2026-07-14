@@ -9,6 +9,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.integrations.active_directory import ActiveDirectoryClient, ActiveDirectoryError
+from app.integrations.duo import DuoClient, DuoError
 from app.integrations.firepower import FirepowerClient, FirepowerError
 from app.integrations.jumpserver import JumpServerClient, JumpServerError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
@@ -304,11 +305,40 @@ class RequireMfaHandler:
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = _username(context)
+        api_hostname = os.getenv("DUO_API_HOSTNAME", "").strip()
+        integration_key = os.getenv("DUO_INTEGRATION_KEY", "").strip()
+        secret_key = os.getenv("DUO_SECRET_KEY", "")
+        real_execution = os.getenv("DUO_REAL_EXECUTION", "").strip().casefold() == "true"
+        if api_hostname and integration_key and secret_key and real_execution:
+            username = _sam_account_name(context)
+            try:
+                async with DuoClient(api_hostname, integration_key, secret_key) as client:
+                    outcome = await client.require_verification(username)
+            except (DuoError, ValueError) as exc:
+                details: dict[str, object] = {
+                    "integration": "duo",
+                    "operation": "send_verification_push",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if isinstance(exc, DuoError) and exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            return SimulatedActionResult(
+                description=f"Duo verification push was approved for account {target}.",
+                target_identifier=target,
+                details={
+                    "integration": "duo",
+                    "operation": "send_verification_push",
+                    "mode": "real",
+                    "verification_confirmed": outcome.verification_confirmed,
+                },
+            )
         return _result(
             f"Would require an MFA challenge for account {target} on its next access.",
             target,
-            integration="identity_provider",
-            operation="require_mfa",
+            integration="duo",
+            operation="send_verification_push",
         )
 
 

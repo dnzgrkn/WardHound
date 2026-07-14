@@ -13,6 +13,7 @@ from app.engines.response import (
     DisableUserHandler,
     InMemoryApprovalStore,
     QuarantineDeviceHandler,
+    RequireMfaHandler,
     ResponseEngine,
     action_context_from_incident,
 )
@@ -22,6 +23,7 @@ from app.integrations.active_directory import (
     ActiveDirectoryError,
     DisableAccountResult,
 )
+from app.integrations.duo import DuoError, DuoVerificationResult
 from app.integrations.firepower import BlockIpResult, FirepowerError
 from app.integrations.jumpserver import (
     JumpServerError,
@@ -109,6 +111,28 @@ class StubFirepowerClient:
         if self.error is not None:
             raise self.error
         return BlockIpResult(already_blocked=False)
+
+
+class StubDuoClient:
+    calls: list[str] = []
+    error: DuoError | None = None
+
+    def __init__(self, api_hostname: str, integration_key: str, secret_key: str) -> None:
+        assert api_hostname == "api-synthetic.duosecurity.com"
+        assert integration_key == "DIXXXXXXXXXXXXXXXXXX"
+        assert secret_key == "synthetic-secret-key"
+
+    async def __aenter__(self) -> StubDuoClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def require_verification(self, username: str) -> DuoVerificationResult:
+        self.calls.append(username)
+        if self.error is not None:
+            raise self.error
+        return DuoVerificationResult()
 
 
 class StubJumpServerClient:
@@ -708,3 +732,75 @@ async def test_jumpserver_failure_becomes_explainable_audit_record(
     assert record.result is not None
     assert record.result.details["mode"] == "real"
     assert record.result.details["status_code"] == 403
+
+
+@pytest.mark.parametrize(
+    "missing_variable",
+    [
+        "DUO_API_HOSTNAME",
+        "DUO_INTEGRATION_KEY",
+        "DUO_SECRET_KEY",
+        "DUO_REAL_EXECUTION",
+        None,
+    ],
+)
+async def test_duo_execution_gate_requires_all_four_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    missing_variable: str | None,
+) -> None:
+    monkeypatch.setattr(response_module, "DuoClient", StubDuoClient)
+    configuration = {
+        "DUO_API_HOSTNAME": "api-synthetic.duosecurity.com",
+        "DUO_INTEGRATION_KEY": "DIXXXXXXXXXXXXXXXXXX",
+        "DUO_SECRET_KEY": "synthetic-secret-key",
+        "DUO_REAL_EXECUTION": "true",
+    }
+    for name, value in configuration.items():
+        monkeypatch.setenv(name, value)
+    if missing_variable is not None:
+        if missing_variable == "DUO_REAL_EXECUTION":
+            monkeypatch.setenv(missing_variable, "false")
+        else:
+            monkeypatch.delenv(missing_variable)
+    StubDuoClient.calls = []
+    StubDuoClient.error = None
+    incident, event = incident_and_evidence()
+
+    result = await RequireMfaHandler().simulate(
+        action(ResponseActionType.REQUIRE_MFA, requires_approval=True),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    expected_mode = "real" if missing_variable is None else "simulation"
+    assert result.details["mode"] == expected_mode
+    assert StubDuoClient.calls == (["jdoe"] if expected_mode == "real" else [])
+    if expected_mode == "real":
+        assert result.details["operation"] == "send_verification_push"
+        assert result.details["verification_confirmed"] is True
+
+
+async def test_duo_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "DuoClient", StubDuoClient)
+    monkeypatch.setenv("DUO_API_HOSTNAME", "api-synthetic.duosecurity.com")
+    monkeypatch.setenv("DUO_INTEGRATION_KEY", "DIXXXXXXXXXXXXXXXXXX")
+    monkeypatch.setenv("DUO_SECRET_KEY", "synthetic-secret-key")
+    monkeypatch.setenv("DUO_REAL_EXECUTION", "true")
+    StubDuoClient.calls = []
+    StubDuoClient.error = DuoError("Duo user lookup returned HTTP 401", status_code=401)
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.REQUIRE_MFA, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["status_code"] == 401
