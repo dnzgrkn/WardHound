@@ -1,12 +1,12 @@
 # WardHound — Yoğun Build Roadmap
 
-Hazırlanma: 9 Temmuz 2026 | Tempo: 20+ saat/hafta, ama ilerleme takvim haftasına değil aşama tamamlanmasına göre — "Aşama N" başlıkları sabit bir hafta demek değil, sıralı bir iş birimi demek. Hedef: internship'i bitmeden önce gerçek NAC/PAM/AD trafiğine karşı test edebilecek bir MVP çıkarmak.
+Hazırlanma: 9 Temmuz 2026 | Tempo: 20+ saat/hafta, ama ilerleme takvim haftasına değil aşama tamamlanmasına göre — "Aşama N" başlıkları sabit bir hafta demek değil, sıralı bir iş birimi demek. Hedef: internship bitmeden önce gerçek NAC/PAM/AD trafiğine karşı test edebilecek bir MVP çıkarmak.
 
 ## Neden sıralamayı değiştiriyoruz
 
 `12_Month_Career_Roadmap.md`'de WardHound Phase 3'te (Ocak–Mart 2027), CCNA ve Network Automation Platform'dan sonra planlanmıştı. Bunu öne çekmenin tek gerçek gerekçesi var ama güçlü bir gerekçe: şu an elinde canlı bir Zero Trust altyapısı (PacketFence, JumpServer, AD Tiering) var ve internship bitince bu erişim kayboluyor. Bir correlation/AI platformunu gerçek event'lere karşı test edebilmek, sentetik veriyle test etmekten kıyaslanamayacak kadar değerli — bu iddiayı portföyde kanıtlanabilir kılan şey de bu. Riski açık söyleyeyim: CCNA'yı erteliyorsun ve bu roadmap'i job-search takvimini birkaç ay kaydırabilir. Kabul edilebilir bir trade-off, çünkü zaman-kısıtlı fırsat (internship erişimi) geri gelmeyecek, sertifika her zaman alınabilir.
 
-**Gizlilik kuralı devam ediyor:** İnternship'teki gerçek hostname/IP/kullanıcı adı/şirket-özel veri asla public repo'ya girmeyecek. Gerçek event'lerle sadece lokal/private test yapılacak; public repo'ya giden her şey (örnek loglar, case study, demo) [internal confidentiality reference removed] kuralına göre anonimleştirilecek — "orta ölçekli bir kurumsal ortam" gibi genellenmiş ifadeler, gerçek RADIUS secret/SNMP community/kullanıcı adı yok.
+**Gizlilik kuralı devam ediyor:** İnternship'teki gerçek hostname/IP/kullanıcı adı/şirket-özel veri asla public repo'ya girmeyecek. Gerçek event'lerle sadece lokal/private test yapılacak; public repo'ya giden her şey (örnek loglar, case study, demo) proje gizlilik kuralına göre anonimleştirilecek — "orta ölçekli bir kurumsal ortam" gibi genellenmiş ifadeler, gerçek RADIUS secret/SNMP community/kullanıcı adı yok.
 
 ## Kritik yol riski
 
@@ -18,33 +18,41 @@ Eğer internship'te kalan süre azalırsa, Aşama 1–2 (iskelet + gerçek colle
 
 Docker Compose ile FastAPI + PostgreSQL + Redis + Celery worker iskeleti. Pydantic v2 ile `RawEvent` ve `NormalizedEvent` şemalarını tasarla — bu proje boyunca her katmanın konuştuğu ortak sözleşme bu olacak, en başta doğru kurulmalı. Collector interface'ini (abstract base class) tanımla: her collector `raw bytes/dict → RawEvent` üretir. ADR-001 yaz: neden bu stack, neden rule-based correlation (ML değil) ile başlıyoruz. CI: ruff + mypy + pytest + GitHub Actions. Çıktı: `docker-compose up` ile ayakta duran, sahte bir event'i uçtan uca DB'ye yazan boş bir pipeline.
 
-## Aşama 2 — Gerçek Collector'lar (en yüksek öncelik)
+## Aşama 2 — Gerçek Collector'lar (en yüksek öncelik) ✅ tamamlandı
 
 PacketFence syslog collector (UDP/TCP listener, RFC5424 parse), JumpServer collector (REST API polling — session start/end, privileged command, abnormal session), AD collector (Windows Event Forwarding veya WinRM üzerinden Security log okuma — 4625 failed auth, 4740 lockout, 4728 group membership change). Her biri normalization layer'dan geçip `NormalizedEvent` olarak Postgres'e yazılıyor. Bu aşama internship ortamına karşı gerçek doğrulama yapılacak aşama — mümkünse burayı geciktirme.
 
-## Aşama 3 — Correlation + Policy + Risk Engine
+## Aşama 3 — Correlation + Policy + Risk Engine ✅ tamamlandı
 
 Zaman-pencereli correlation kuralları (örn. aynı entity'de N dakika içinde AD auth fail + PacketFence quarantine + JumpServer yeni session = tek incident). Policy engine: Tier 0 kaynağa PAW olmayan cihazdan erişim, VLAN quarantine bypass denemesi gibi ihlaller. Risk engine: başlangıçta deterministik, ağırlıklı skor (ML'e sonra geçilir — "never over-engineer" prensibi). Bu üç motor birbirinden bağımsız, ayrı test edilebilir modüller olmalı.
 
-## Aşama 4 — AI Analysis Engine
+## Aşama 4 — AI Analysis Engine ✅ tamamlandı
 
 Anthropic Claude + Instructor ile structured output: `RootCauseAnalysis` Pydantic modeli (`probable_cause`, `confidence`, `evidence: list[Evidence]`, `recommended_actions: list[Action]`, `side_effects: str`). Correlated incident'i context olarak ver, NAC/PAM/AD domain'ine özel few-shot örnekler ekle. Serbest metin çıktı yok — her şey typed. Bu katman projenin asıl farkı, en çok zaman ayrılması gereken yer.
 
-## Aşama 5 — Response Engine (simüle)
+## Aşama 5 — Response Engine (simüle) ✅ tamamlandı
 
 Action modelleri: Quarantine Device, Disable User, Block IP, Close Session, Require MFA, Notify Administrator, Create Incident, Require Manual Approval. Hepsi başta simüle — audit log'a yazılır, gerçek sisteme dokunmaz. Human-in-the-loop approval workflow zorunlu, özellikle privileged action'lar için (bu, career roadmap'inde AI güvenilirliği için vurgulanan nokta — "otonom remediation yok" mesajı hem doğru hem satılabilir).
 
-## Aşama 6 — Dashboard
+## Aşama 6 — Dashboard ✅ tamamlandı
 
 React + TypeScript + Tailwind + shadcn/ui. Incident listesi, incident detail (AI açıklaması + confidence + kanıt + önerilen aksiyon), approve/reject UI, WebSocket ile realtime güncelleme. Bu aşama demo edilebilirlik için kritik — interview'da ekranı açıp gösterebileceğin katman.
 
-## Aşama 7 — Observability + Test Sertliği
+## Aşama 7 — Observability + Test Sertliği ✅ tamamlandı
 
 Prometheus metrikleri, Grafana dashboard, OpenTelemetry tracing. Correlation/policy/risk engine'lerde pytest coverage. mypy + ruff temiz. Structured logging, secrets yönetimi (`.env` + Docker secrets, asla commit edilmez). Kısa bir threat model notu (bu platformun kendisi de bir security tool, kendi saldırı yüzeyini düşünmen bekleniyor).
 
-## Aşama 8 — Dokümantasyon ve Portföy Cilası
+## Aşama 8 — Dokümantasyon ve Portföy Cilası ✅ tamamlandı
 
 README (mermaid mimari diyagramı, kurulum, demo GIF), ADR'ları topla, anonimleştirilmiş case study ("gerçek kurumsal Zero Trust altyapısına karşı test edildi" — client ismi yok), tek komutla `docker-compose up` demo, v2 roadmap notu (ML tabanlı anomaly detection, multi-tenant, SOAR entegrasyonları — şimdi yapma, sadece yaz).
+
+## v2 / Sonraki adımlar
+
+- **Kalıcı veri katmanı:** In-memory store'ları SQLAlchemy modelleri, Alembic migration'ları ve Postgres-backed repository'lerle değiştirmek; restart sonrası incident, event, analiz ve approval geçmişini korumak için gerekli.
+- **Gerçek kimlik doğrulama ve yetkilendirme:** OIDC/JWT tabanlı kullanıcı kimliği ve response talep eden ile onaylayan rolleri ayırmak; kararları client-asserted etiket yerine doğrulanmış principal'a bağlamak için gerekli.
+- **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
+- **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
+- **SOAR entegrasyonları:** Onaylanmış response taleplerini idempotent, gözlemlenebilir ve denetlenebilir harici playbook'lara aktarmak için planlandı.
 
 ---
 
