@@ -5,11 +5,14 @@ from uuid import uuid4
 
 import pytest
 
+import app.engines.response as response_module
 from app.engines.response import (
     InMemoryApprovalStore,
+    QuarantineDeviceHandler,
     ResponseEngine,
     action_context_from_incident,
 )
+from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import (
     EntityType,
@@ -21,6 +24,27 @@ from app.schemas.events import (
 )
 from app.schemas.incidents import Incident
 from app.schemas.response import ApprovalStatus, ExecutionStatus
+
+
+class StubPacketFenceClient:
+    calls: list[str] = []
+    error: PacketFenceError | None = None
+
+    def __init__(self, base_url: str, api_token: str) -> None:
+        assert base_url == "https://10.20.30.40:9999"
+        assert api_token == "synthetic-api-token"
+
+    async def __aenter__(self) -> StubPacketFenceClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def isolate_node(self, mac_address: str) -> PacketFenceIsolationResult:
+        self.calls.append(mac_address)
+        if self.error is not None:
+            raise self.error
+        return PacketFenceIsolationResult(status_code=200, node_status="unreg")
 
 
 def incident_and_evidence() -> tuple[Incident, NormalizedEvent]:
@@ -215,3 +239,74 @@ async def test_malformed_target_is_a_failed_simulation() -> None:
     assert record.execution_status is ExecutionStatus.FAILED
     assert record.result is not None
     assert "device MAC address is missing" in record.result.description
+
+
+@pytest.mark.parametrize(
+    ("configured", "real_execution", "expected_mode"),
+    [
+        (False, False, "simulation"),
+        (False, True, "simulation"),
+        (True, False, "simulation"),
+        (True, True, "real"),
+    ],
+)
+async def test_packetfence_two_signal_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: bool,
+    real_execution: bool,
+    expected_mode: str,
+) -> None:
+    monkeypatch.setattr(response_module, "PacketFenceClient", StubPacketFenceClient)
+    StubPacketFenceClient.calls = []
+    StubPacketFenceClient.error = None
+    if configured:
+        monkeypatch.setenv("PACKETFENCE_BASE_URL", "https://10.20.30.40:9999")
+        monkeypatch.setenv("PACKETFENCE_API_TOKEN", "synthetic-api-token")
+    else:
+        monkeypatch.delenv("PACKETFENCE_BASE_URL", raising=False)
+        monkeypatch.delenv("PACKETFENCE_API_TOKEN", raising=False)
+    monkeypatch.setenv("PACKETFENCE_REAL_EXECUTION", str(real_execution).lower())
+    incident, event = incident_and_evidence()
+
+    result = await QuarantineDeviceHandler().simulate(
+        action(ResponseActionType.QUARANTINE_DEVICE, requires_approval=True),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    assert result.details["mode"] == expected_mode
+    assert StubPacketFenceClient.calls == (
+        ["AA:BB:CC:DD:EE:FF"] if expected_mode == "real" else []
+    )
+    if expected_mode == "real":
+        assert result.details["status_code"] == 200
+        assert result.details["node_status"] == "unreg"
+        assert result.details["isolation_confirmed"] is True
+
+
+async def test_packetfence_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "PacketFenceClient", StubPacketFenceClient)
+    monkeypatch.setenv("PACKETFENCE_BASE_URL", "https://10.20.30.40:9999")
+    monkeypatch.setenv("PACKETFENCE_API_TOKEN", "synthetic-api-token")
+    monkeypatch.setenv("PACKETFENCE_REAL_EXECUTION", "true")
+    StubPacketFenceClient.calls = []
+    StubPacketFenceClient.error = PacketFenceError(
+        "PacketFence isolation request returned HTTP 503", status_code=503
+    )
+    incident, event = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+    requested = await engine.request_action(
+        action(ResponseActionType.QUARANTINE_DEVICE, requires_approval=True),
+        incident.id,
+        action_context_from_incident(incident, [event]),
+    )
+
+    record = await engine.approve(requested.id, decided_by="analyst-01")
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["status_code"] == 503
+    assert "HTTP 503" in record.result.description
