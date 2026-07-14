@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from typing import Annotated
@@ -9,6 +10,7 @@ from typing import Annotated
 from fastapi import Header, HTTPException, status
 
 API_KEY_ENV = "WARDHOUND_API_KEY"
+logger = logging.getLogger(__name__)
 
 
 def configured_api_key() -> str | None:
@@ -32,11 +34,13 @@ def require_api_key(
 ) -> None:
     """Protect dashboard REST routes with the configured static API key."""
     if configured_api_key() is None:
+        logger.error("API authentication unavailable", extra={"reason": "key_not_configured"})
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="WARDHOUND_API_KEY is not configured",
         )
     if not api_key_matches(api_key):
+        logger.warning("API authentication rejected", extra={"reason": "invalid_or_missing_key"})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",

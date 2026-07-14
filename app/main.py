@@ -1,11 +1,12 @@
 """WardHound ASGI application."""
 
+import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -17,7 +18,12 @@ from app.api.services import ApiServices
 from app.api.websocket import router as websocket_router
 from app.engines.analysis import create_analysis_engine_from_env
 from app.engines.response import InMemoryApprovalStore, ResponseEngine
+from app.observability.logging import configure_logging
+from app.observability.metrics import instrument_metrics
+from app.observability.tracing import instrument_tracing
 from app.stores.incidents import InMemoryEventStore, InMemoryIncidentStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,15 +42,8 @@ def _cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize and release external service clients."""
-    database = create_async_engine(
-        os.getenv(
-            "DATABASE_URL",
-            "postgresql+asyncpg://wardhound:wardhound@localhost:5432/wardhound",
-        )
-    )
-    redis: Redis = Redis.from_url(
-        os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
-    )
+    database = create_async_engine(os.environ["DATABASE_URL"])
+    redis: Redis = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
     app.state.services = Services(database=database, redis=redis)
     approval_store = InMemoryApprovalStore()
     app.state.api_services = ApiServices(
@@ -61,7 +60,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     """Create and configure the WardHound API."""
+    configure_logging()
     application = FastAPI(title="WardHound API", docs_url="/docs", lifespan=lifespan)
+
+    @application.middleware("http")
+    async def log_unhandled_errors(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            route = request.scope.get("route")
+            logger.error(
+                "Unhandled API request error",
+                extra={
+                    "method": request.method,
+                    "route": getattr(route, "path", "unmatched"),
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise
+
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -72,6 +91,8 @@ def create_app() -> FastAPI:
     application.include_router(health_router)
     application.include_router(incident_router)
     application.include_router(websocket_router)
+    instrument_metrics(application)
+    instrument_tracing(application)
     return application
 
 

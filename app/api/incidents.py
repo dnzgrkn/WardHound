@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Annotated
 from uuid import UUID
 
@@ -33,10 +35,19 @@ from app.engines.response import (
     InvalidActionTransitionError,
     action_context_from_incident,
 )
+from app.observability.metrics import (
+    AI_ANALYSIS_CALLS,
+    AI_ANALYSIS_DURATION,
+    INCIDENTS_CREATED,
+    RESPONSE_ACTIONS,
+)
+from app.observability.tracing import tracer
 from app.schemas.analysis import RecommendedAction, RootCauseAnalysis
 from app.schemas.events import Severity
 from app.schemas.incidents import Incident, IncidentStatus
 from app.schemas.response import ActionAuditRecord
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1",
@@ -56,10 +67,17 @@ async def ingest_events(batch: EventBatch, services: ApiServicesDependency) -> l
     fire outside of a single bulk-loaded request. Incident IDs are deterministic (see
     CorrelationEngine), so re-evaluating retained history on every call is idempotent.
     """
-    services.events.add_all(batch.events)
-    incidents = run_pipeline(services.events.get_all())
+    with tracer.start_as_current_span("wardhound.ingest.run_pipeline") as span:
+        span.set_attribute("wardhound.event.count", len(batch.events))
+        event_types = ",".join(sorted({event.event_type.value for event in batch.events}))
+        span.set_attribute("wardhound.event.types", event_types)
+        services.events.add_all(batch.events)
+        incidents = run_pipeline(services.events.get_all())
+        span.set_attribute("wardhound.incident.count", len(incidents))
     for incident in incidents:
         created = services.incidents.upsert(incident)
+        if created:
+            INCIDENTS_CREATED.labels(incident.severity.value).inc()
         await services.connections.broadcast(
             RealtimeMessage[Incident](
                 type=(
@@ -146,15 +164,28 @@ async def analyze_incident(
     if incident is None:
         return _error(status.HTTP_404_NOT_FOUND, "incident_not_found", "Incident was not found")
     evidence = services.events.get_many(incident.event_ids)
+    started = time.perf_counter()
     try:
-        analysis_engine = services.analysis_engine_factory()
-        analysis = await analysis_engine.analyze(incident, evidence)
+        with tracer.start_as_current_span("wardhound.ai_analysis") as span:
+            span.set_attribute("wardhound.incident.id", str(incident.id))
+            span.set_attribute("wardhound.evidence.count", len(evidence))
+            analysis_engine = services.analysis_engine_factory()
+            analysis = await analysis_engine.analyze(incident, evidence)
     except AnalysisConfigurationError as exc:
+        _record_analysis_failure(incident.id, exc)
         return _error(status.HTTP_503_SERVICE_UNAVAILABLE, "analysis_not_configured", str(exc))
     except AnalysisInputError as exc:
+        _record_analysis_failure(incident.id, exc)
         return _error(status.HTTP_422_UNPROCESSABLE_CONTENT, "analysis_input_error", str(exc))
     except AnalysisGenerationError as exc:
+        _record_analysis_failure(incident.id, exc)
         return _error(status.HTTP_502_BAD_GATEWAY, "analysis_generation_failed", str(exc))
+    except Exception as exc:
+        _record_analysis_failure(incident.id, exc)
+        raise
+    finally:
+        AI_ANALYSIS_DURATION.observe(time.perf_counter() - started)
+    AI_ANALYSIS_CALLS.labels("success").inc()
     services.incidents.save_analysis(incident.id, analysis)
     await services.connections.broadcast(
         RealtimeMessage[AnalysisCompleted](
@@ -185,6 +216,9 @@ async def request_action(
         incident_id=incident.id,
         context=action_context_from_incident(incident, evidence),
     )
+    _record_action_transition(record, "requested")
+    if record.execution_status.value != "not_executed":
+        _record_action_transition(record, "execution_result")
     await _broadcast_action(services, record)
     return record
 
@@ -209,6 +243,8 @@ async def approve_action(
         return _error(status.HTTP_404_NOT_FOUND, "action_not_found", str(exc))
     except InvalidActionTransitionError as exc:
         return _error(status.HTTP_409_CONFLICT, "invalid_action_transition", str(exc))
+    _record_action_transition(record, "approved")
+    _record_action_transition(record, "execution_result")
     await _broadcast_action(services, record)
     return record
 
@@ -237,6 +273,7 @@ async def reject_action(
         return _error(status.HTTP_404_NOT_FOUND, "action_not_found", str(exc))
     except InvalidActionTransitionError as exc:
         return _error(status.HTTP_409_CONFLICT, "invalid_action_transition", str(exc))
+    _record_action_transition(record, "rejected")
     await _broadcast_action(services, record)
     return record
 
@@ -255,3 +292,27 @@ async def _broadcast_action(
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
     payload = ApiError(code=code, message=message)
     return JSONResponse(status_code=status_code, content=payload.model_dump())
+
+
+def _record_analysis_failure(incident_id: UUID, exc: Exception) -> None:
+    AI_ANALYSIS_CALLS.labels("failure").inc()
+    logger.error(
+        "AI analysis failed",
+        extra={"incident_id": str(incident_id), "error_type": type(exc).__name__},
+    )
+
+
+def _record_action_transition(record: ActionAuditRecord, transition: str) -> None:
+    action_type = record.action.action_type.value
+    RESPONSE_ACTIONS.labels(action_type, transition).inc()
+    logger.info(
+        "Response action lifecycle transition",
+        extra={
+            "record_id": str(record.id),
+            "incident_id": str(record.incident_id) if record.incident_id else None,
+            "action_type": action_type,
+            "transition": transition,
+            "approval_status": record.approval_status.value,
+            "execution_status": record.execution_status.value,
+        },
+    )
