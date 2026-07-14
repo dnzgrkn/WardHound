@@ -2,10 +2,12 @@ services:
   api:
     build: .
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://wardhound:wardhound@postgres:5432/wardhound}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env, see .env.example}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in .env, see .env.example}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       WARDHOUND_API_KEY: ${WARDHOUND_API_KEY:?set WARDHOUND_API_KEY in .env, see .env.example}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
     ports:
       - "8000:8000"
     depends_on:
@@ -13,6 +15,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      jaeger:
+        condition: service_started
 
   frontend:
     build:
@@ -34,7 +38,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-wardhound}
       POSTGRES_USER: ${POSTGRES_USER:-wardhound}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wardhound}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env, see .env.example}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -54,9 +58,9 @@ services:
   worker:
     build: .
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://wardhound:wardhound@postgres:5432/wardhound}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env, see .env.example}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in .env, see .env.example}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL in .env, see .env.example}
     command: ["/bin/sh", "-c", "celery --broker=\"$$CELERY_BROKER_URL\" worker --loglevel=info"]
     depends_on:
       postgres:
@@ -64,6 +68,39 @@ services:
       redis:
         condition: service_healthy
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.68.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env, see .env.example}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   frontend_node_modules:
+  grafana_data:

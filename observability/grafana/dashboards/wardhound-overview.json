@@ -1,0 +1,18 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "Incidents created by severity", "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "sum by (severity) (rate(wardhound_incidents_created_total[5m]))", "legendFormat": "{{severity}}"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}},
+    {"id": 2, "type": "timeseries", "title": "Response action transitions", "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "sum by (transition) (rate(wardhound_response_actions_total[5m]))", "legendFormat": "{{transition}}"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}},
+    {"id": 3, "type": "stat", "title": "AI analysis success rate", "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "sum(rate(wardhound_ai_analysis_calls_total{result=\"success\"}[5m])) / clamp_min(sum(rate(wardhound_ai_analysis_calls_total[5m])), 0.000001)"}], "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}, "gridPos": {"h": 7, "w": 8, "x": 0, "y": 8}},
+    {"id": 4, "type": "timeseries", "title": "AI analysis p95 latency", "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(wardhound_ai_analysis_duration_seconds_bucket[5m])))"}], "fieldConfig": {"defaults": {"unit": "s"}}, "gridPos": {"h": 7, "w": 8, "x": 8, "y": 8}},
+    {"id": 5, "type": "timeseries", "title": "API request p95 latency", "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le, route) (rate(wardhound_http_request_duration_seconds_bucket[5m])))", "legendFormat": "{{route}}"}], "fieldConfig": {"defaults": {"unit": "s"}}, "gridPos": {"h": 7, "w": 8, "x": 16, "y": 8}}
+  ],
+  "schemaVersion": 41,
+  "tags": ["wardhound", "security-operations"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "WardHound Operations Overview",
+  "uid": "wardhound-operations",
+  "version": 1
+}
