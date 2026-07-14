@@ -154,6 +154,23 @@ def test_engine_defensively_gates_constructed_privileged_bypass() -> None:
     assert record.action.requires_approval is True
 
 
+@pytest.mark.parametrize("action_type", sorted(RecommendedAction.PRIVILEGED_ACTIONS))
+def test_every_constructed_privileged_action_is_defensively_gated(
+    action_type: ResponseActionType,
+) -> None:
+    bypass = RecommendedAction.model_construct(
+        action_type=action_type,
+        rationale="Synthetic constructed input.",
+        requires_approval=False,
+    )
+
+    record = ResponseEngine(InMemoryApprovalStore()).request_action(bypass)
+
+    assert record.approval_status is ApprovalStatus.PENDING
+    assert record.execution_status is ExecutionStatus.NOT_EXECUTED
+    assert record.action.requires_approval is True
+
+
 @pytest.mark.parametrize(
     ("action_type", "expected_text"),
     [

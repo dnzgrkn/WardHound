@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.engines.risk import RiskEngine
+from app.engines.risk import RiskConfig, RiskEngine
 from app.schemas.events import (
     EntityType,
     NormalizedEntity,
@@ -69,3 +69,21 @@ def test_policy_violation_adds_bonus_and_changes_band() -> None:
 def test_rejects_empty_evidence() -> None:
     with pytest.raises(ValueError, match="at least one event"):
         RiskEngine().score([])
+
+
+@pytest.mark.parametrize(
+    ("event_weight", "severity_weight", "expected"),
+    [(200, 0, 100), (-200, 0, 0)],
+)
+def test_score_is_capped_at_both_bounds(
+    event_weight: int, severity_weight: int, expected: int
+) -> None:
+    event = make_event(NormalizedEventType.AUTH_SUCCEEDED, Severity.LOW)
+    config = RiskConfig(
+        event_weights={NormalizedEventType.AUTH_SUCCEEDED: event_weight},
+        severity_weights={Severity.LOW: severity_weight},
+    )
+
+    assessment = RiskEngine(config).score([event])
+
+    assert assessment.score == expected

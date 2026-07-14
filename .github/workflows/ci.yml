@@ -43,4 +43,4 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: mypy .
-      - run: pytest
+      - run: pytest --cov=app.engines --cov-report=term-missing --cov-fail-under=90

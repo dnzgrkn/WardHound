@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
+
 from app.engines.correlation import CorrelationEngine, CrossSystemCompromiseRule
 from app.schemas.events import (
     EntityType,
@@ -87,6 +89,21 @@ def test_does_not_correlate_events_outside_window() -> None:
     incidents = CorrelationEngine().correlate(correlated_events(jump_offset=timedelta(minutes=16)))
 
     assert incidents == []
+
+
+def test_window_boundary_is_inclusive() -> None:
+    incidents = CorrelationEngine().correlate(
+        correlated_events(jump_offset=timedelta(minutes=15))
+    )
+
+    assert len(incidents) == 1
+
+
+def test_rejects_non_positive_window() -> None:
+    engine = CorrelationEngine(rules=[CrossSystemCompromiseRule(window=timedelta(0))])
+
+    with pytest.raises(ValueError, match="must be positive"):
+        engine.correlate(correlated_events())
 
 
 def test_uses_mac_as_secondary_entity_key() -> None:
