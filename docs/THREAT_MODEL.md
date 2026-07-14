@@ -51,6 +51,14 @@ also conceal an intrusion or manufacture misleading incidents.
   unrelated administrator changes to devices. Audit records therefore state
   `enforcement_pending_deploy=true`; operators must review FMC pending changes and deploy through
   their change-control process before treating the IP as blocked.
+- JumpServer session termination can interrupt an operator during an active privileged task. Its
+  effect is reversible through a new authorized connection and has a narrower blast radius than
+  identity-wide AD disablement, but terminating the wrong session can still disrupt production
+  work. Real execution requires a base URL, private API token, and the independent
+  `JUMPSERVER_REAL_EXECUTION=true` flag, plus human approval. Use a dedicated JumpServer identity
+  limited to `terminal.terminate_session`, rotate its token, and restrict WardHound egress to the
+  management endpoint. WardHound treats kill-task acceptance as insufficient and confirms the
+  session's `is_finished` state with a fresh read before recording success.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and
