@@ -25,10 +25,9 @@ incident ID (or an explicit unlinked label), severity, a whitespace-normalized r
 500 characters, and a UTC timestamp. It never receives normalized evidence, raw event payloads,
 entities, credentials, or the webhook URL as message inputs.
 
-The current response-handler contract does not carry incident severity and schemas are outside
-this stage, so the handler honestly sends `unknown` rather than guessing a value. A future contract
-revision may pass the persisted incident severity without expanding the payload beyond this
-bounded triage summary.
+`ActionContext` carries the linked incident's persisted severity, so the handler sends that real
+value without expanding the payload beyond this bounded triage summary. Unlinked response requests
+retain the honest `unknown` fallback rather than fabricating a severity.
 
 ### Two-signal execution gate and audit
 

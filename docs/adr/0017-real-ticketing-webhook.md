@@ -28,10 +28,10 @@ configuration. It posts a JSON object containing `title`, `description`, `incide
 whitespace-normalized recommendation rationale capped at 1,000 characters; no normalized evidence,
 raw event payload, entity data, credential, or webhook URL is included.
 
-The response-handler contract does not carry the persisted incident title or severity and schemas
-and stores are outside this stage. The handler therefore builds a deterministic title from the
-WardHound incident ID and honestly sends severity `unknown` rather than guessing. A future contract
-revision may supply those persisted incident fields without expanding the payload's data boundary.
+The response-handler contract does not carry the persisted incident title, so the handler builds a
+deterministic title from the WardHound incident ID. `ActionContext` carries the linked incident's
+persisted severity, which is sent without expanding the payload's data boundary. Unlinked response
+requests retain the honest `unknown` fallback rather than fabricating a severity.
 
 ### Confirmation and failure semantics
 

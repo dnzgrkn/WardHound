@@ -37,6 +37,7 @@ class ActionContext(BaseModel):
 
     entities: tuple[NormalizedEntity, ...] = ()
     session_id: str | None = Field(default=None, min_length=1)
+    severity: str | None = Field(default=None, min_length=1)
 
 
 class SimulatedActionResult(BaseModel):

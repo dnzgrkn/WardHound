@@ -399,7 +399,7 @@ class NotifyAdministratorHandler:
                 async with WebhookClient(webhook_url) as client:
                     status_code = await client.send_notification(
                         incident_id,
-                        "unknown",
+                        context.severity or "unknown",
                         action.rationale,
                         datetime.now(UTC),
                     )
@@ -460,7 +460,7 @@ class CreateIncidentHandler:
                         title,
                         action.rationale,
                         incident_id,
-                        "unknown",
+                        context.severity or "unknown",
                     )
             except TicketingError as exc:
                 details: dict[str, object] = {
@@ -684,7 +684,11 @@ def action_context_from_incident(
                 break
         if session_id:
             break
-    return ActionContext(entities=tuple(incident.entities), session_id=session_id)
+    return ActionContext(
+        entities=tuple(incident.entities),
+        session_id=session_id,
+        severity=incident.severity.value,
+    )
 
 
 def _device_mac(context: ActionContext) -> str:

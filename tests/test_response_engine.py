@@ -272,6 +272,14 @@ def action(action_type: ResponseActionType, requires_approval: bool) -> Recommen
     )
 
 
+def test_action_context_carries_linked_incident_severity() -> None:
+    incident, event = incident_and_evidence()
+
+    context = action_context_from_incident(incident, [event])
+
+    assert context.severity == "high"
+
+
 async def test_privileged_action_waits_for_approval_before_simulation() -> None:
     incident, event = incident_and_evidence()
     store = InMemoryApprovalStore()
@@ -973,6 +981,32 @@ async def test_webhook_failure_becomes_explainable_audit_record(
     assert record.result.details["status_code"] == 503
 
 
+async def test_linked_incident_severity_reaches_administrator_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "WebhookClient", StubWebhookClient)
+    monkeypatch.setenv(
+        "NOTIFY_WEBHOOK_URL", "https://hooks.example.com/services/synthetic-token"
+    )
+    monkeypatch.setenv("NOTIFY_REAL_EXECUTION", "true")
+    StubWebhookClient.calls = []
+    StubWebhookClient.error = None
+    incident, event = incident_and_evidence()
+    recommendation = action(
+        ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False
+    )
+
+    await NotifyAdministratorHandler().simulate(
+        recommendation,
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    assert StubWebhookClient.calls == [
+        (incident.id, "high", recommendation.rationale)
+    ]
+
+
 async def test_webhook_payload_excludes_raw_context_and_url_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1085,3 +1119,32 @@ async def test_ticketing_failure_becomes_explainable_audit_record(
     assert record.result.details["mode"] == "real"
     assert record.result.details["operation"] == "create_ticket"
     assert record.result.details["status_code"] == 200
+
+
+async def test_linked_incident_severity_reaches_ticketing_webhook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "TicketingClient", StubTicketingClient)
+    monkeypatch.setenv(
+        "TICKETING_WEBHOOK_URL", "https://tickets.example.com/hooks/synthetic-token"
+    )
+    monkeypatch.setenv("TICKETING_REAL_EXECUTION", "true")
+    StubTicketingClient.calls = []
+    StubTicketingClient.error = None
+    incident, event = incident_and_evidence()
+    recommendation = action(ResponseActionType.CREATE_INCIDENT, requires_approval=False)
+
+    await CreateIncidentHandler().simulate(
+        recommendation,
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    assert StubTicketingClient.calls == [
+        (
+            f"WardHound incident {incident.id}",
+            recommendation.rationale,
+            incident.id,
+            "high",
+        )
+    ]
