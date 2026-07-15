@@ -66,11 +66,36 @@ Sekiz response action'dan yalnızca `QUARANTINE_DEVICE`, PacketFence'e karşı g
 
 `ldap3` senkron bir kütüphane olduğu için (asyncpg gibi native async sürücüsü yok), tüm LDAP işlemi (bind→search→modify→confirm→unbind) tek bir `asyncio.to_thread` çağrısında yürütülüyor — bu, Stage 9'daki hatanın (zaten async olan bir sürücüyü gereksiz thread+nested-loop shim'i arkasına saklamak) tekrarı değil, gerçekten senkron bir kütüphaneyi event loop'tan doğru şekilde ayırma. Stage 11'in `bulk_deregister` dersi burada da uygulandı: `modify()` çağrısı başarı dönse bile, client `userAccountControl`'ü tekrar okuyup `ACCOUNTDISABLE` bitinin gerçekten set edildiğini doğrulamadan başarı raporlamıyor — bunu kanıtlayan bir regresyon testi var (modify sahte başarı döndüğünde durum değişmemişse hata fırlatılıyor). Detaylar: `docs/adr/0012-real-active-directory-disable.md`.
 
+## Aşama 13 — Üçüncü Gerçek SOAR Entegrasyonu: Cisco FMC Block IP ✅ tamamlandı
+
+`BlockIpHandler` artık Cisco Secure Firewall Management Center'a (FMC) karşı gerçek bir HTTP mutasyonu yapabiliyor — ama ACL kurallarını doğrudan yazmıyor/sıralamıyor. Bunun yerine, mevcut bir deny kuralının zaten referans verdiği önceden provizyonlanmış bir Network Group objesine IP literal ekliyor (Palo Alto EDL / Fortinet address group gibi gerçek SOAR-firewall entegrasyonlarında kullanılan dynamic-blocklist deseni). Beş sinyalli gate (`FMC_BASE_URL`, `FMC_USERNAME`, `FMC_PASSWORD`, `FMC_BLOCKLIST_NETWORK_GROUP_ID`, `FMC_REAL_EXECUTION=true`) ve PUT sonrası re-GET ile üyelik doğrulaması var.
+
+Önemli bir mimari karar: FMC, obje değişikliğini yönetilen cihazlara push etmek için ayrı bir "deploy" adımı gerektiriyor — WardHound bunu otomatik tetiklemiyor, çünkü hangi cihazların seçileceği belirsiz ve otomatik deploy ilgisiz bekleyen admin değişikliklerini de push edebilir. Bu bilinçli sınır hem ADR'de hem audit kaydında (`enforcement_pending_deploy: true`) dürüstçe belirtiliyor — WardHound "engellendi" demiyor, "üyelik onaylandı, deploy operatör sorumluluğunda" diyor. Detaylar: `docs/adr/0013-real-fmc-block-ip.md`.
+
+## Aşama 14 — Dördüncü Gerçek SOAR Entegrasyonu: JumpServer Close Session ✅ tamamlandı
+
+`CloseSessionHandler` artık JumpServer'a karşı gerçek bir oturum sonlandırma çağrısı yapabiliyor. Promptun ilk hipotezi (`.../sessions/{id}/terminate/`) JumpServer'ın gerçek API'sinde yoktu — doğru endpoint (`POST /api/v1/terminal/tasks/kill-session/`, array body) JumpServer'ın gerçek kaynak kodu okunarak (`urls/api_urls.py`, `api/session/task.py`) bulundu. Bu endpoint asenkron bir "kill task" kuyruğa alıyor, anında sonuç dönmüyor — WardHound `{"ok": [...]}` kabul yanıtını yeterli saymayıp ayrıca `GET .../sessions/{id}/` ile `is_finished: true` doğrulaması yapıyor. Üç sinyalli gate. Detaylar: `docs/adr/0014-real-jumpserver-close-session.md`.
+
+## Aşama 15 — Beşinci Gerçek SOAR Entegrasyonu: Duo Step-Up Verification ✅ tamamlandı
+
+`RequireMfaHandler`, WardHound'un kendi Auth0 kimlik doğrulamasından (ADR 0010, sadece analyst/approver girişini doğrular) bilinçli olarak ayrı tutuldu — PacketFence NAC ortamlarında yaygın eşleşen Duo Security'ye entegre edildi. Duo'nun public Admin API'sinde "sıradaki girişte MFA zorunlu kıl" endpoint'i yok; bunun yerine gerçek eylem "şimdi bir doğrulama push'u gönder ve onaylandığını doğrula" — bu, orijinal simülasyon metninden ("sıradaki erişiminde MFA gerektirecek") daha dar bir kapsam ve hem ADR'de hem audit description'da dürüstçe böyle etiketlendi (gelecekteki hiçbir erişimi etkilemiyor, sadece o anki sahiplik/possession doğrulaması). Dört sinyalli gate, HMAC-SHA1 request signing (test bunu bağımsızca yeniden hesaplayıp doğruluyor). Detaylar: `docs/adr/0015-real-duo-require-mfa.md`.
+
+## Aşama 16-17 — Düşük Riskli Webhook Entegrasyonları: Notify Administrator + Create Incident ✅ tamamlandı
+
+`NotifyAdministratorHandler` ve `CreateIncidentHandler`, önceki beş aşamadan farklı bir risk profiline sahip: altyapı mutasyonu yapmıyorlar, bu yüzden confirmation-read disiplini uygulanmıyor (teslim edilen bir mesajın veya oluşturulan bir ticket ID'nin kendisi zaten sonucun kanıtı). İkisi de iki sinyalli gate (`*_WEBHOOK_URL`, `*_REAL_EXECUTION=true`) ile vendor-agnostic bir webhook'a POST atıyor — gerçek ITSM/chat aracı deployment'ın kendi sorumluluğunda bu webhook'un arkasında duruyor. Sızıntı testleri, giden payload'da ham event verisi veya credential olmadığını doğruluyor. Detaylar: `docs/adr/0016-real-webhook-notification.md`, `docs/adr/0017-real-ticketing-webhook.md`.
+
+## Aşama 18 — Düzeltme: Manual Approval Audit Doğruluğu ✅ tamamlandı
+
+`RequireManualApprovalHandler` yeni bir dış entegrasyon değil — bir doğruluk düzeltmesi. Bu handler'ın çalıştığı an itibarıyla onay zaten gerçek olarak gerçekleşmiş oluyor (Auth0 ile doğrulanmış bir approver, `approve:actions` izniyle onaylamış ve bu karar Postgres'e kalıcılaştırılmış) — ama eski açıklama metni hâlâ "Would record a satisfied manual-approval checkpoint" gibi hipotetik/gelecek zaman diliyle yazılıyordu. `SimulatedActionHandler` Protocol'üne `decided_by`/`decided_at` keyword-only parametreleri eklendi (diğer yedi handler mekanik olarak yok sayıyor, davranışları değişmedi), ve bu handler artık gerçek onaylayanın kimliğini ve zamanını doğru şekilde raporluyor, `mode="real"` koşulsuz. Uçtan uca test gerçek `ResponseEngine.approve()` akışını kullanıyor, test-double bypass yok. Detaylar: `docs/adr/0018-manual-approval-audit-accuracy.md`.
+
+## SOAR entegrasyon durumu — özet
+
+Sekiz response action'ın hepsi artık ya gerçek (beşi: PacketFence, Active Directory, Cisco FMC, JumpServer, Duo — hedef sistemin riskine uygun çoklu-sinyal gate + insan onayı + sonuç doğrulamasıyla), ya düşük riskli gerçek webhook (ikisi: notify, create-ticket), ya da zaten-gerçek bir işlemin doğru etiketlenmiş hali (biri: manual approval). Üç gerçek hata bu süreçte bulunup düzeltildi — hepsi agent'ın kendi testleri geçtikten SONRA, kaynak kodu/gerçek API dokümantasyonunu bağımsızca okuyarak yakalandı: PacketFence'te yanlış endpoint (isolation yerine deregistration), JumpServer'da yanlış endpoint hipotezi (prompt aşamasında düzeltildi), Postgres store'da event-loop blokajı (Aşama 9).
+
 ## v2 / Sonraki adımlar
 
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
-- **SOAR entegrasyon durumu:** Yedi dış sistem eylemi hedef sistemin riskine uygun safety gate ile gerçek hale getirildi; altyapı mutasyonu yapan eylemler insan onayı ve sonuç doğrulaması gerektirirken, düşük riskli webhook eylemleri kendi teslim veya oluşturma sözleşmelerini doğrular. Require manual approval bir dış entegrasyon değildir: önceden kalıcılaştırılmış gerçek onay kimliğini ve zamanını audit kaydında doğru biçimde raporlar.
 
 ---
 
