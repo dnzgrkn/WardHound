@@ -370,20 +370,28 @@ async def test_every_constructed_privileged_action_is_defensively_gated(
 
 
 @pytest.mark.parametrize(
-    ("action_type", "expected_text"),
+    ("action_type", "expected_text", "expected_mode"),
     [
-        (ResponseActionType.QUARANTINE_DEVICE, "PacketFence"),
-        (ResponseActionType.DISABLE_USER, "CORP\\jdoe"),
-        (ResponseActionType.BLOCK_IP, "10.20.30.40"),
-        (ResponseActionType.CLOSE_SESSION, "session-synthetic-0042"),
-        (ResponseActionType.REQUIRE_MFA, "MFA challenge"),
-        (ResponseActionType.NOTIFY_ADMINISTRATOR, "administrator notification"),
-        (ResponseActionType.CREATE_INCIDENT, "incident tracking record"),
-        (ResponseActionType.REQUIRE_MANUAL_APPROVAL, "manual-approval checkpoint"),
+        (ResponseActionType.QUARANTINE_DEVICE, "PacketFence", "simulation"),
+        (ResponseActionType.DISABLE_USER, "CORP\\jdoe", "simulation"),
+        (ResponseActionType.BLOCK_IP, "10.20.30.40", "simulation"),
+        (ResponseActionType.CLOSE_SESSION, "session-synthetic-0042", "simulation"),
+        (ResponseActionType.REQUIRE_MFA, "MFA challenge", "simulation"),
+        (
+            ResponseActionType.NOTIFY_ADMINISTRATOR,
+            "administrator notification",
+            "simulation",
+        ),
+        (ResponseActionType.CREATE_INCIDENT, "incident tracking record", "simulation"),
+        (
+            ResponseActionType.REQUIRE_MANUAL_APPROVAL,
+            "Manual approval checkpoint satisfied by analyst-01",
+            "real",
+        ),
     ],
 )
-async def test_every_action_type_has_a_sane_simulated_handler(
-    action_type: ResponseActionType, expected_text: str
+async def test_every_action_type_has_sane_handler_audit_details(
+    action_type: ResponseActionType, expected_text: str, expected_mode: str
 ) -> None:
     incident, event = incident_and_evidence()
     engine = ResponseEngine(InMemoryApprovalStore())
@@ -399,7 +407,34 @@ async def test_every_action_type_has_a_sane_simulated_handler(
     assert record.execution_status is ExecutionStatus.SIMULATED
     assert record.result is not None
     assert expected_text in record.result.description
-    assert record.result.details["mode"] == "simulation"
+    assert record.result.details["mode"] == expected_mode
+
+
+async def test_manual_approval_identity_and_time_reach_handler_through_engine() -> None:
+    decided_by = "auth0|synthetic-approver-0018"
+    store = InMemoryApprovalStore()
+    engine = ResponseEngine(store)
+    requested = await engine.request_action(
+        action(ResponseActionType.REQUIRE_MANUAL_APPROVAL, requires_approval=True)
+    )
+
+    record = await engine.approve(requested.id, decided_by=decided_by)
+
+    assert record.decided_by == decided_by
+    assert record.decided_at is not None
+    assert record.result is not None
+    assert record.result.description == (
+        f"Manual approval checkpoint satisfied by {decided_by} at {record.decided_at}."
+    )
+    assert record.result.details == {
+        "integration": "approval_audit",
+        "operation": "record_manual_checkpoint",
+        "mode": "real",
+    }
+    history = await store.history(requested.id)
+    assert history[1].approval_status is ApprovalStatus.APPROVED
+    assert history[1].decided_by == decided_by
+    assert history[1].decided_at == record.decided_at
 
 
 async def test_malformed_target_is_a_failed_simulation() -> None:

@@ -101,8 +101,11 @@ class SimulatedActionHandler(Protocol):
         action: RecommendedAction,
         context: ActionContext,
         incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
-        """Describe a future integration call without performing it."""
+        """Execute or describe the registered response behavior."""
         ...
 
 
@@ -110,7 +113,13 @@ class QuarantineDeviceHandler:
     action_type = ResponseActionType.QUARANTINE_DEVICE
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _device_mac(context)
         base_url = os.getenv("PACKETFENCE_BASE_URL", "").strip()
@@ -156,7 +165,13 @@ class DisableUserHandler:
     action_type = ResponseActionType.DISABLE_USER
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _username(context)
         ldap_url = os.getenv("AD_LDAP_URL", "").strip()
@@ -207,7 +222,13 @@ class BlockIpHandler:
     action_type = ResponseActionType.BLOCK_IP
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _ip_address(context)
         base_url = os.getenv("FMC_BASE_URL", "").strip()
@@ -256,7 +277,13 @@ class CloseSessionHandler:
     action_type = ResponseActionType.CLOSE_SESSION
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         if context.session_id is None:
             raise SimulationTargetError("JumpServer session identifier is missing")
@@ -304,7 +331,13 @@ class RequireMfaHandler:
     action_type = ResponseActionType.REQUIRE_MFA
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _username(context)
         api_hostname = os.getenv("DUO_API_HOSTNAME", "").strip()
@@ -348,7 +381,13 @@ class NotifyAdministratorHandler:
     action_type = ResponseActionType.NOTIFY_ADMINISTRATOR
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
         webhook_url = os.getenv("NOTIFY_WEBHOOK_URL", "").strip()
@@ -396,7 +435,13 @@ class CreateIncidentHandler:
     action_type = ResponseActionType.CREATE_INCIDENT
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "new response tracking record"
         webhook_url = os.getenv("TICKETING_WEBHOOK_URL", "").strip()
@@ -452,14 +497,27 @@ class RequireManualApprovalHandler:
     action_type = ResponseActionType.REQUIRE_MANUAL_APPROVAL
 
     async def simulate(
-        self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
+        self,
+        action: RecommendedAction,
+        context: ActionContext,
+        incident_id: UUID | None,
+        *,
+        decided_by: str | None = None,
+        decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
-        return _result(
-            f"Would record a satisfied manual-approval checkpoint for {target}.",
-            target,
-            integration="approval_audit",
-            operation="record_manual_checkpoint",
+        if decided_by is None or decided_at is None:
+            raise SimulationTargetError("manual approval decision metadata is missing")
+        return SimulatedActionResult(
+            description=(
+                f"Manual approval checkpoint satisfied by {decided_by} at {decided_at}."
+            ),
+            target_identifier=target,
+            details={
+                "integration": "approval_audit",
+                "operation": "record_manual_checkpoint",
+                "mode": "real",
+            },
         )
 
 
@@ -571,7 +629,11 @@ class ResponseEngine:
         else:
             try:
                 result = await handler.simulate(
-                    record.action, record.context, record.incident_id
+                    record.action,
+                    record.context,
+                    record.incident_id,
+                    decided_by=record.decided_by,
+                    decided_at=record.decided_at,
                 )
             except SimulationTargetError as exc:
                 result = SimulatedActionResult(
