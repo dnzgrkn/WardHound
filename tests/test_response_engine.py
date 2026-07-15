@@ -218,6 +218,16 @@ class StubTicketingClient:
         return TicketCreationResult(ticket_id="TKT-SYNTHETIC-0017", status_code=201)
 
 
+class StubSecretProvider:
+    def __init__(self, values: dict[str, str]) -> None:
+        self.values = values
+        self.calls: list[str] = []
+
+    async def get(self, key: str) -> str | None:
+        self.calls.append(key)
+        return self.values.get(key)
+
+
 BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
 
 
@@ -1005,6 +1015,31 @@ async def test_linked_incident_severity_reaches_administrator_webhook(
     assert StubWebhookClient.calls == [
         (incident.id, "high", recommendation.rationale)
     ]
+
+
+async def test_handler_configuration_can_come_from_secret_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = StubSecretProvider(
+        {
+            "NOTIFY_WEBHOOK_URL": "https://hooks.example.com/services/synthetic-token",
+            "NOTIFY_REAL_EXECUTION": "true",
+        }
+    )
+    monkeypatch.setattr(response_module, "default_secret_provider", provider)
+    monkeypatch.setattr(response_module, "WebhookClient", StubWebhookClient)
+    StubWebhookClient.calls = []
+    StubWebhookClient.error = None
+    incident, event = incident_and_evidence()
+
+    result = await NotifyAdministratorHandler().simulate(
+        action(ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False),
+        action_context_from_incident(incident, [event]),
+        incident.id,
+    )
+
+    assert result.details["mode"] == "real"
+    assert provider.calls == ["NOTIFY_WEBHOOK_URL", "NOTIFY_REAL_EXECUTION"]
 
 
 async def test_webhook_payload_excludes_raw_context_and_url_credential(

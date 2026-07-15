@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from app.config.secrets import default_secret_provider
 from app.integrations.active_directory import ActiveDirectoryClient, ActiveDirectoryError
 from app.integrations.duo import DuoClient, DuoError
 from app.integrations.firepower import FirepowerClient, FirepowerError
@@ -122,10 +122,17 @@ class QuarantineDeviceHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _device_mac(context)
-        base_url = os.getenv("PACKETFENCE_BASE_URL", "").strip()
-        api_token = os.getenv("PACKETFENCE_API_TOKEN", "").strip()
-        security_event_id = os.getenv("PACKETFENCE_ISOLATION_SECURITY_EVENT_ID", "").strip()
-        real_execution = os.getenv("PACKETFENCE_REAL_EXECUTION", "").strip().casefold() == "true"
+        base_url = (await default_secret_provider.get("PACKETFENCE_BASE_URL") or "").strip()
+        api_token = (await default_secret_provider.get("PACKETFENCE_API_TOKEN") or "").strip()
+        security_event_id = (
+            await default_secret_provider.get("PACKETFENCE_ISOLATION_SECURITY_EVENT_ID") or ""
+        ).strip()
+        real_execution = (
+            (await default_secret_provider.get("PACKETFENCE_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
+        )
         if base_url and api_token and security_event_id and real_execution:
             try:
                 async with PacketFenceClient(base_url, api_token) as client:
@@ -174,11 +181,18 @@ class DisableUserHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _username(context)
-        ldap_url = os.getenv("AD_LDAP_URL", "").strip()
-        bind_dn = os.getenv("AD_BIND_DN", "").strip()
-        bind_password = os.getenv("AD_BIND_PASSWORD", "")
-        search_base_dn = os.getenv("AD_USER_SEARCH_BASE_DN", "").strip()
-        real_execution = os.getenv("AD_REAL_EXECUTION", "").strip().casefold() == "true"
+        ldap_url = (await default_secret_provider.get("AD_LDAP_URL") or "").strip()
+        bind_dn = (await default_secret_provider.get("AD_BIND_DN") or "").strip()
+        bind_password = await default_secret_provider.get("AD_BIND_PASSWORD") or ""
+        search_base_dn = (
+            await default_secret_provider.get("AD_USER_SEARCH_BASE_DN") or ""
+        ).strip()
+        real_execution = (
+            (await default_secret_provider.get("AD_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
+        )
         if ldap_url and bind_dn and bind_password and search_base_dn and real_execution:
             sam_account_name = _sam_account_name(context)
             try:
@@ -231,11 +245,18 @@ class BlockIpHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _ip_address(context)
-        base_url = os.getenv("FMC_BASE_URL", "").strip()
-        username = os.getenv("FMC_USERNAME", "").strip()
-        password = os.getenv("FMC_PASSWORD", "")
-        network_group_id = os.getenv("FMC_BLOCKLIST_NETWORK_GROUP_ID", "").strip()
-        real_execution = os.getenv("FMC_REAL_EXECUTION", "").strip().casefold() == "true"
+        base_url = (await default_secret_provider.get("FMC_BASE_URL") or "").strip()
+        username = (await default_secret_provider.get("FMC_USERNAME") or "").strip()
+        password = await default_secret_provider.get("FMC_PASSWORD") or ""
+        network_group_id = (
+            await default_secret_provider.get("FMC_BLOCKLIST_NETWORK_GROUP_ID") or ""
+        ).strip()
+        real_execution = (
+            (await default_secret_provider.get("FMC_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
+        )
         if base_url and username and password and network_group_id and real_execution:
             try:
                 async with FirepowerClient(base_url, username, password) as client:
@@ -287,10 +308,13 @@ class CloseSessionHandler:
     ) -> SimulatedActionResult:
         if context.session_id is None:
             raise SimulationTargetError("JumpServer session identifier is missing")
-        base_url = os.getenv("JUMPSERVER_BASE_URL", "").strip()
-        api_token = os.getenv("JUMPSERVER_API_TOKEN", "").strip()
+        base_url = (await default_secret_provider.get("JUMPSERVER_BASE_URL") or "").strip()
+        api_token = (await default_secret_provider.get("JUMPSERVER_API_TOKEN") or "").strip()
         real_execution = (
-            os.getenv("JUMPSERVER_REAL_EXECUTION", "").strip().casefold() == "true"
+            (await default_secret_provider.get("JUMPSERVER_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
         )
         if base_url and api_token and real_execution:
             try:
@@ -340,10 +364,17 @@ class RequireMfaHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = _username(context)
-        api_hostname = os.getenv("DUO_API_HOSTNAME", "").strip()
-        integration_key = os.getenv("DUO_INTEGRATION_KEY", "").strip()
-        secret_key = os.getenv("DUO_SECRET_KEY", "")
-        real_execution = os.getenv("DUO_REAL_EXECUTION", "").strip().casefold() == "true"
+        api_hostname = (await default_secret_provider.get("DUO_API_HOSTNAME") or "").strip()
+        integration_key = (
+            await default_secret_provider.get("DUO_INTEGRATION_KEY") or ""
+        ).strip()
+        secret_key = await default_secret_provider.get("DUO_SECRET_KEY") or ""
+        real_execution = (
+            (await default_secret_provider.get("DUO_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
+        )
         if api_hostname and integration_key and secret_key and real_execution:
             username = _sam_account_name(context)
             try:
@@ -390,9 +421,12 @@ class NotifyAdministratorHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
-        webhook_url = os.getenv("NOTIFY_WEBHOOK_URL", "").strip()
+        webhook_url = (await default_secret_provider.get("NOTIFY_WEBHOOK_URL") or "").strip()
         real_execution = (
-            os.getenv("NOTIFY_REAL_EXECUTION", "").strip().casefold() == "true"
+            (await default_secret_provider.get("NOTIFY_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
         )
         if webhook_url and real_execution:
             try:
@@ -444,9 +478,14 @@ class CreateIncidentHandler:
         decided_at: datetime | None = None,
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "new response tracking record"
-        webhook_url = os.getenv("TICKETING_WEBHOOK_URL", "").strip()
+        webhook_url = (
+            await default_secret_provider.get("TICKETING_WEBHOOK_URL") or ""
+        ).strip()
         real_execution = (
-            os.getenv("TICKETING_REAL_EXECUTION", "").strip().casefold() == "true"
+            (await default_secret_provider.get("TICKETING_REAL_EXECUTION") or "")
+            .strip()
+            .casefold()
+            == "true"
         )
         if webhook_url and real_execution:
             title = (

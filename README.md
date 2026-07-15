@@ -146,5 +146,6 @@ WardHound keeps deterministic security decisions separate from probabilistic exp
 - [ADR 0016](docs/adr/0016-real-webhook-notification.md) — safety-gated, data-minimized administrator webhook delivery.
 - [ADR 0017](docs/adr/0017-real-ticketing-webhook.md) — confirmed, vendor-neutral external ticket creation.
 - [ADR 0018](docs/adr/0018-manual-approval-audit-accuracy.md) — accurate attribution of the already-persisted manual approval checkpoint.
+- [ADR 0019](docs/adr/0019-secrets-provider-interface.md) — async secret retrieval seam with unchanged environment-backed behavior.
 
 See the [product specification](docs/SPEC.md), [roadmap](docs/ROADMAP.md), and [threat model](docs/THREAT_MODEL.md) for the wider design and explicitly deferred production work.
