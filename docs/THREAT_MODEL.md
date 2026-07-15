@@ -68,6 +68,15 @@ also conceal an intrusion or manufacture misleading incidents.
   active and enrolled. Use a dedicated Admin API integration limited to required resource access,
   rotate both keys, restrict egress to the configured Duo hostname, and alert on unusual push
   volume. This operation does not disable users or reset every remembered-device session.
+- Administrator webhooks are the lowest-risk real response boundary because they do not mutate
+  security infrastructure, but they create a new data-egress path. The webhook URL embeds a
+  bearer-token-equivalent secret and must be stored, rotated, and access-controlled like an API
+  credential; it must never enter logs, audit records, errors, or message bodies. Real delivery
+  requires both `NOTIFY_WEBHOOK_URL` and the independent `NOTIFY_REAL_EXECUTION=true` flag. The
+  outgoing Slack-compatible message is deliberately limited to incident ID, severity, a bounded
+  rationale, and timestamp—never raw events, normalized evidence, entities, or credentials.
+  Restrict egress to the intended webhook host and treat missing or spurious notifications as the
+  primary operational failure mode.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and

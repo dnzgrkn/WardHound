@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import httpx
 import pytest
 from ldap3 import MOCK_SYNC, Connection, Server
 
@@ -12,6 +14,7 @@ from app.engines.response import (
     CloseSessionHandler,
     DisableUserHandler,
     InMemoryApprovalStore,
+    NotifyAdministratorHandler,
     QuarantineDeviceHandler,
     RequireMfaHandler,
     ResponseEngine,
@@ -30,6 +33,7 @@ from app.integrations.jumpserver import (
     TerminateSessionResult,
 )
 from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
+from app.integrations.webhook import WebhookClient, WebhookError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import (
     EntityType,
@@ -40,7 +44,7 @@ from app.schemas.events import (
     SourceSystem,
 )
 from app.schemas.incidents import Incident
-from app.schemas.response import ApprovalStatus, ExecutionStatus
+from app.schemas.response import ActionContext, ApprovalStatus, ExecutionStatus
 
 
 class StubPacketFenceClient:
@@ -154,6 +158,33 @@ class StubJumpServerClient:
         if self.error is not None:
             raise self.error
         return TerminateSessionResult()
+
+
+class StubWebhookClient:
+    calls: list[tuple[object, str, str]] = []
+    error: WebhookError | None = None
+
+    def __init__(self, webhook_url: str) -> None:
+        assert webhook_url == "https://hooks.example.com/services/synthetic-token"
+
+    async def __aenter__(self) -> StubWebhookClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def send_notification(
+        self,
+        incident_id: object,
+        severity: str,
+        rationale: str,
+        timestamp: datetime,
+    ) -> int:
+        assert timestamp.tzinfo is UTC
+        self.calls.append((incident_id, severity, rationale))
+        if self.error is not None:
+            raise self.error
+        return 200
 
 
 BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
@@ -804,3 +835,111 @@ async def test_duo_failure_becomes_explainable_audit_record(
     assert record.result is not None
     assert record.result.details["mode"] == "real"
     assert record.result.details["status_code"] == 401
+
+
+@pytest.mark.parametrize(
+    ("webhook_url", "real_execution", "expected_mode"),
+    [
+        ("", "false", "simulation"),
+        ("", "true", "simulation"),
+        ("https://hooks.example.com/services/synthetic-token", "false", "simulation"),
+        ("https://hooks.example.com/services/synthetic-token", "not-true", "simulation"),
+        ("https://hooks.example.com/services/synthetic-token", "true", "real"),
+    ],
+)
+async def test_webhook_execution_gate_requires_both_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    webhook_url: str,
+    real_execution: str,
+    expected_mode: str,
+) -> None:
+    monkeypatch.setattr(response_module, "WebhookClient", StubWebhookClient)
+    if webhook_url:
+        monkeypatch.setenv("NOTIFY_WEBHOOK_URL", webhook_url)
+    else:
+        monkeypatch.delenv("NOTIFY_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("NOTIFY_REAL_EXECUTION", real_execution)
+    StubWebhookClient.calls = []
+    StubWebhookClient.error = None
+    incident, _ = incident_and_evidence()
+    recommendation = action(
+        ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False
+    )
+
+    result = await NotifyAdministratorHandler().simulate(
+        recommendation, ActionContext(), incident.id
+    )
+
+    assert result.details["mode"] == expected_mode
+    assert result.details["operation"] == "send_webhook_notification"
+    assert StubWebhookClient.calls == (
+        [(incident.id, "unknown", recommendation.rationale)]
+        if expected_mode == "real"
+        else []
+    )
+    if expected_mode == "real":
+        assert result.details["status_code"] == 200
+
+
+async def test_webhook_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "WebhookClient", StubWebhookClient)
+    monkeypatch.setenv(
+        "NOTIFY_WEBHOOK_URL", "https://hooks.example.com/services/synthetic-token"
+    )
+    monkeypatch.setenv("NOTIFY_REAL_EXECUTION", "true")
+    StubWebhookClient.calls = []
+    StubWebhookClient.error = WebhookError(
+        "Administrator notification webhook returned HTTP 503", status_code=503
+    )
+    incident, _ = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+
+    record = await engine.request_action(
+        action(ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False), incident.id
+    )
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["operation"] == "send_webhook_notification"
+    assert record.result.details["status_code"] == 503
+
+
+async def test_webhook_payload_excludes_raw_context_and_url_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    webhook_url = "https://hooks.example.com/services/synthetic-url-credential"
+    raw_event_marker = "RAW_EVENT_DUMP=password-synthetic-secret"
+    captured_body = b""
+
+    def request_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_body
+        captured_body = request.content
+        return httpx.Response(200)
+
+    transport = httpx.MockTransport(request_handler)
+
+    def client_factory(configured_url: str) -> WebhookClient:
+        assert configured_url == webhook_url
+        return WebhookClient(configured_url, transport=transport)
+
+    monkeypatch.setattr(response_module, "WebhookClient", client_factory)
+    monkeypatch.setenv("NOTIFY_WEBHOOK_URL", webhook_url)
+    monkeypatch.setenv("NOTIFY_REAL_EXECUTION", "true")
+    incident, _ = incident_and_evidence()
+
+    result = await NotifyAdministratorHandler().simulate(
+        action(ResponseActionType.NOTIFY_ADMINISTRATOR, requires_approval=False),
+        ActionContext(session_id=raw_event_marker),
+        incident.id,
+    )
+
+    outgoing_payload = json.loads(captured_body)
+    serialized_payload = json.dumps(outgoing_payload)
+    assert result.details["mode"] == "real"
+    assert raw_event_marker not in serialized_payload
+    assert "synthetic-url-credential" not in serialized_payload
+    assert webhook_url not in serialized_payload
+    assert set(outgoing_payload) == {"text"}

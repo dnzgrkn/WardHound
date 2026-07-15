@@ -13,6 +13,7 @@ from app.integrations.duo import DuoClient, DuoError
 from app.integrations.firepower import FirepowerClient, FirepowerError
 from app.integrations.jumpserver import JumpServerClient, JumpServerError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
+from app.integrations.webhook import WebhookClient, WebhookError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
 from app.schemas.incidents import Incident
@@ -349,11 +350,44 @@ class NotifyAdministratorHandler:
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "unlinked response request"
+        webhook_url = os.getenv("NOTIFY_WEBHOOK_URL", "").strip()
+        real_execution = (
+            os.getenv("NOTIFY_REAL_EXECUTION", "").strip().casefold() == "true"
+        )
+        if webhook_url and real_execution:
+            try:
+                async with WebhookClient(webhook_url) as client:
+                    status_code = await client.send_notification(
+                        incident_id,
+                        "unknown",
+                        action.rationale,
+                        datetime.now(UTC),
+                    )
+            except WebhookError as exc:
+                details: dict[str, object] = {
+                    "integration": "webhook",
+                    "operation": "send_webhook_notification",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if isinstance(exc, WebhookError) and exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            return SimulatedActionResult(
+                description=f"Administrator webhook notification sent for {target}.",
+                target_identifier=target,
+                details={
+                    "integration": "webhook",
+                    "operation": "send_webhook_notification",
+                    "mode": "real",
+                    "status_code": status_code,
+                },
+            )
         return _result(
             f"Would log an administrator notification for {target}.",
             target,
-            integration="notification_log",
-            operation="record_notification",
+            integration="webhook",
+            operation="send_webhook_notification",
         )
 
 
