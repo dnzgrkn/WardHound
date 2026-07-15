@@ -70,7 +70,7 @@ Sekiz response action'dan yalnızca `QUARANTINE_DEVICE`, PacketFence'e karşı g
 
 - **ML tabanlı anomaly detection:** Yeterli etiketli veri ve değerlendirme zemini oluştuğunda deterministik kuralları bilinmeyen davranış örüntüleriyle tamamlamak için planlandı.
 - **Multi-tenant izolasyon:** Veri, sorgu, telemetry ve yetkilendirme sınırlarını tenant bazında ayırarak birden çok kurumu güvenle desteklemek için gerekli.
-- **Kalan SOAR entegrasyonları:** Create incident ve require manual approval hâlâ simülasyon. Gerçek entegrasyonlar hedef sistemin riskine uygun safety gate ile tek tek eklenecek; altyapı mutasyonu yapan eylemler insan onayı ve sonuç doğrulaması gerektirirken, webhook bildirimi gibi mutasyon yapmayan eylemler yalnızca HTTP teslim sonucuna dayanır.
+- **Kalan SOAR entegrasyonları:** Yalnızca require manual approval hâlâ simülasyon. Gerçek entegrasyonlar hedef sistemin riskine uygun safety gate ile tek tek eklendi; altyapı mutasyonu yapan eylemler insan onayı ve sonuç doğrulaması gerektirirken, düşük riskli webhook eylemleri kendi teslim veya oluşturma sözleşmelerini doğrular.
 
 ---
 

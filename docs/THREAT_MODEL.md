@@ -77,6 +77,16 @@ also conceal an intrusion or manufacture misleading incidents.
   rationale, and timestamp—never raw events, normalized evidence, entities, or credentials.
   Restrict egress to the intended webhook host and treat missing or spurious notifications as the
   primary operational failure mode.
+- External ticketing webhooks create cross-team tracking records but do not mutate security
+  infrastructure. Their main risks are confidential data egress, disclosure of the
+  bearer-token-equivalent webhook URL, and spurious, missing, or duplicate tickets. Real execution
+  requires both `TICKETING_WEBHOOK_URL` and the independent
+  `TICKETING_REAL_EXECUTION=true` flag. The outbound record is limited to a deterministic title,
+  bounded recommendation rationale, WardHound incident ID, and severity; it never includes raw
+  events, normalized evidence, entities, credentials, or the webhook URL. WardHound requires a
+  non-empty returned ticket identifier before reporting success. Protect and rotate the URL like
+  an API credential, restrict egress to the intended host, and add idempotency at the deployment
+  webhook before enabling retries.
 - Logs, metrics, and traces cross into separate operational stores. They deliberately contain only
   bounded categories, UUIDs, counts, statuses, and event types—not API keys, full event payloads,
   `extra_attributes`, operator names, hostnames, usernames, or target addresses. Access and

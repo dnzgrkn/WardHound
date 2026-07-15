@@ -12,6 +12,7 @@ import app.engines.response as response_module
 from app.engines.response import (
     BlockIpHandler,
     CloseSessionHandler,
+    CreateIncidentHandler,
     DisableUserHandler,
     InMemoryApprovalStore,
     NotifyAdministratorHandler,
@@ -33,6 +34,10 @@ from app.integrations.jumpserver import (
     TerminateSessionResult,
 )
 from app.integrations.packetfence import PacketFenceError, PacketFenceIsolationResult
+from app.integrations.ticketing import (
+    TicketCreationResult,
+    TicketingError,
+)
 from app.integrations.webhook import WebhookClient, WebhookError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import (
@@ -185,6 +190,32 @@ class StubWebhookClient:
         if self.error is not None:
             raise self.error
         return 200
+
+
+class StubTicketingClient:
+    calls: list[tuple[str, str, object, str]] = []
+    error: TicketingError | None = None
+
+    def __init__(self, webhook_url: str) -> None:
+        assert webhook_url == "https://tickets.example.com/hooks/synthetic-token"
+
+    async def __aenter__(self) -> StubTicketingClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def create_ticket(
+        self,
+        title: str,
+        description: str,
+        incident_id: object,
+        severity: str,
+    ) -> TicketCreationResult:
+        self.calls.append((title, description, incident_id, severity))
+        if self.error is not None:
+            raise self.error
+        return TicketCreationResult(ticket_id="TKT-SYNTHETIC-0017", status_code=201)
 
 
 BIND_DN = "CN=svc-wardhound,OU=Service Accounts,DC=corp,DC=example,DC=com"
@@ -943,3 +974,79 @@ async def test_webhook_payload_excludes_raw_context_and_url_credential(
     assert "synthetic-url-credential" not in serialized_payload
     assert webhook_url not in serialized_payload
     assert set(outgoing_payload) == {"text"}
+
+
+@pytest.mark.parametrize(
+    ("webhook_url", "real_execution", "expected_mode"),
+    [
+        ("", "false", "simulation"),
+        ("", "true", "simulation"),
+        ("https://tickets.example.com/hooks/synthetic-token", "false", "simulation"),
+        ("https://tickets.example.com/hooks/synthetic-token", "not-true", "simulation"),
+        ("https://tickets.example.com/hooks/synthetic-token", "true", "real"),
+    ],
+)
+async def test_ticketing_execution_gate_requires_both_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    webhook_url: str,
+    real_execution: str,
+    expected_mode: str,
+) -> None:
+    monkeypatch.setattr(response_module, "TicketingClient", StubTicketingClient)
+    if webhook_url:
+        monkeypatch.setenv("TICKETING_WEBHOOK_URL", webhook_url)
+    else:
+        monkeypatch.delenv("TICKETING_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("TICKETING_REAL_EXECUTION", real_execution)
+    StubTicketingClient.calls = []
+    StubTicketingClient.error = None
+    incident, _ = incident_and_evidence()
+    recommendation = action(ResponseActionType.CREATE_INCIDENT, requires_approval=False)
+
+    result = await CreateIncidentHandler().simulate(
+        recommendation, ActionContext(), incident.id
+    )
+
+    assert result.details["mode"] == expected_mode
+    assert result.details["operation"] == "create_ticket"
+    assert StubTicketingClient.calls == (
+        [
+            (
+                f"WardHound incident {incident.id}",
+                recommendation.rationale,
+                incident.id,
+                "unknown",
+            )
+        ]
+        if expected_mode == "real"
+        else []
+    )
+    if expected_mode == "real":
+        assert result.details["status_code"] == 201
+        assert result.details["ticket_id"] == "TKT-SYNTHETIC-0017"
+
+
+async def test_ticketing_failure_becomes_explainable_audit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(response_module, "TicketingClient", StubTicketingClient)
+    monkeypatch.setenv(
+        "TICKETING_WEBHOOK_URL", "https://tickets.example.com/hooks/synthetic-token"
+    )
+    monkeypatch.setenv("TICKETING_REAL_EXECUTION", "true")
+    StubTicketingClient.calls = []
+    StubTicketingClient.error = TicketingError(
+        "Ticketing webhook response did not return a ticket identifier", status_code=200
+    )
+    incident, _ = incident_and_evidence()
+    engine = ResponseEngine(InMemoryApprovalStore())
+
+    record = await engine.request_action(
+        action(ResponseActionType.CREATE_INCIDENT, requires_approval=False), incident.id
+    )
+
+    assert record.execution_status is ExecutionStatus.FAILED
+    assert record.result is not None
+    assert record.result.details["mode"] == "real"
+    assert record.result.details["operation"] == "create_ticket"
+    assert record.result.details["status_code"] == 200

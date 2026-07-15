@@ -13,6 +13,7 @@ from app.integrations.duo import DuoClient, DuoError
 from app.integrations.firepower import FirepowerClient, FirepowerError
 from app.integrations.jumpserver import JumpServerClient, JumpServerError
 from app.integrations.packetfence import PacketFenceClient, PacketFenceError
+from app.integrations.ticketing import TicketingClient, TicketingError
 from app.integrations.webhook import WebhookClient, WebhookError
 from app.schemas.analysis import RecommendedAction, ResponseActionType
 from app.schemas.events import EntityType, NormalizedEvent, SourceSystem
@@ -398,11 +399,52 @@ class CreateIncidentHandler:
         self, action: RecommendedAction, context: ActionContext, incident_id: UUID | None
     ) -> SimulatedActionResult:
         target = str(incident_id) if incident_id is not None else "new response tracking record"
+        webhook_url = os.getenv("TICKETING_WEBHOOK_URL", "").strip()
+        real_execution = (
+            os.getenv("TICKETING_REAL_EXECUTION", "").strip().casefold() == "true"
+        )
+        if webhook_url and real_execution:
+            title = (
+                f"WardHound incident {incident_id}"
+                if incident_id is not None
+                else "WardHound unlinked response"
+            )
+            try:
+                async with TicketingClient(webhook_url) as client:
+                    outcome = await client.create_ticket(
+                        title,
+                        action.rationale,
+                        incident_id,
+                        "unknown",
+                    )
+            except TicketingError as exc:
+                details: dict[str, object] = {
+                    "integration": "ticketing",
+                    "operation": "create_ticket",
+                    "mode": "real",
+                    "error": str(exc),
+                }
+                if exc.status_code is not None:
+                    details["status_code"] = exc.status_code
+                raise ActionExecutionError(str(exc), details=details) from exc
+            return SimulatedActionResult(
+                description=(
+                    f"External tracking ticket {outcome.ticket_id} was created for {target}."
+                ),
+                target_identifier=target,
+                details={
+                    "integration": "ticketing",
+                    "operation": "create_ticket",
+                    "mode": "real",
+                    "status_code": outcome.status_code,
+                    "ticket_id": outcome.ticket_id,
+                },
+            )
         return _result(
             f"Would open a simulated incident tracking record linked to {target}.",
             target,
-            integration="incident_store",
-            operation="create_tracking_record",
+            integration="ticketing",
+            operation="create_ticket",
         )
 
 
