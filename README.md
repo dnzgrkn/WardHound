@@ -147,5 +147,7 @@ WardHound keeps deterministic security decisions separate from probabilistic exp
 - [ADR 0017](docs/adr/0017-real-ticketing-webhook.md) — confirmed, vendor-neutral external ticket creation.
 - [ADR 0018](docs/adr/0018-manual-approval-audit-accuracy.md) — accurate attribution of the already-persisted manual approval checkpoint.
 - [ADR 0019](docs/adr/0019-secrets-provider-interface.md) — async secret retrieval seam with unchanged environment-backed behavior.
+- [ADR 0020](docs/adr/0020-daily-security-digest.md) — deterministic daily security digest aggregation with optional AI narrative.
+- [ADR 0021](docs/adr/0021-real-collector-evidence-ingestion.md) — real collector evidence ingestion validated against three live, concurrent systems.
 
 See the [product specification](docs/SPEC.md), [roadmap](docs/ROADMAP.md), and [threat model](docs/THREAT_MODEL.md) for the wider design and explicitly deferred production work.
