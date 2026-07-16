@@ -9,14 +9,12 @@ import { SummaryStrip } from "@/components/summary-strip";
 import { Button } from "@/components/ui/button";
 import { apiClient, ApiClientError, type WardHoundApi } from "@/lib/api";
 import { type PrivilegedIdentity, unavailableIdentity } from "@/lib/auth";
-import { createSyntheticDemoEvents } from "@/lib/demo-events";
 import {
   applyAnalysisMessage,
   applyIncidentMessage,
   connectRealtime,
   mergeFetchedActionRecords,
   upsertActionRecord,
-  upsertIncident,
   type RealtimeConnection,
 } from "@/lib/realtime";
 import type {
@@ -58,7 +56,6 @@ export function App({
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("connecting");
-  const [demoBusy, setDemoBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -108,17 +105,6 @@ export function App({
       })
       .catch((error: unknown) => setPageError(errorMessage(error)))
       .finally(() => setDetailLoading(false));
-  }, [client]);
-
-  const loadDemo = useCallback(() => {
-    setDemoBusy(true);
-    void client.ingestEvents(createSyntheticDemoEvents())
-      .then((result) => {
-        setIncidents((current) => result.reduce(upsertIncident, current));
-        setPageError(null);
-      })
-      .catch((error: unknown) => setPageError(errorMessage(error)))
-      .finally(() => setDemoBusy(false));
   }, [client]);
 
   const analyze = useCallback(() => {
@@ -181,7 +167,7 @@ export function App({
 
   return (
     <div className="min-h-screen">
-      <AppHeader status={realtimeStatus} onLoadDemo={loadDemo} demoBusy={demoBusy} />
+      <AppHeader status={realtimeStatus} />
       <main className="mx-auto max-w-[1500px] px-4 py-7 sm:px-6 lg:px-8 lg:py-9">
         {pageError && (
           <div className="mb-6 flex items-start justify-between gap-4 rounded-lg border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-200" role="alert">
@@ -215,7 +201,7 @@ export function App({
               <IncidentFilters filters={filters} onChange={(nextFilters) => { setLoading(true); setFilters(nextFilters); }} />
             </section>
             <SummaryStrip incidents={sortedIncidents} actions={actionRecords} />
-            <IncidentTable incidents={sortedIncidents} loading={loading} onSelect={selectIncident} onLoadDemo={loadDemo} />
+            <IncidentTable incidents={sortedIncidents} loading={loading} onSelect={selectIncident} />
             <div className="flex items-center justify-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"><ChevronsUp className="h-3.5 w-3.5 text-primary" />Realtime updates are merged into this queue</div>
           </div>
         )}

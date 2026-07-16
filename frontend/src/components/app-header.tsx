@@ -1,6 +1,5 @@
-import { Activity, DatabaseZap, Dog, Radio, ShieldCheck, WifiOff } from "lucide-react";
+import { Activity, Dog, Radio, ShieldCheck, WifiOff } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import type { RealtimeStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -11,14 +10,8 @@ const statusCopy: Record<RealtimeStatus, string> = {
   offline: "Offline",
 };
 
-export function AppHeader({
-  status,
-  onLoadDemo,
-  demoBusy,
-}: {
+export function AppHeader({ status }: {
   status: RealtimeStatus;
-  onLoadDemo: () => void;
-  demoBusy: boolean;
 }) {
   const StatusIcon = status === "live" ? Radio : status === "offline" ? WifiOff : Activity;
   return (
@@ -54,10 +47,6 @@ export function AppHeader({
               )}
             />
           </div>
-          <Button variant="outline" size="sm" onClick={onLoadDemo} disabled={demoBusy}>
-            <DatabaseZap className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{demoBusy ? "Loading…" : "Load demo"}</span>
-          </Button>
         </div>
       </div>
     </header>
