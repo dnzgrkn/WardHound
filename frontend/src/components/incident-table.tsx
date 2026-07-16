@@ -1,6 +1,5 @@
 import { ArrowRight, Clock3, Radar } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/severity-badge";
@@ -11,12 +10,10 @@ export function IncidentTable({
   incidents,
   loading,
   onSelect,
-  onLoadDemo,
 }: {
   incidents: Incident[];
   loading: boolean;
   onSelect: (incidentId: string) => void;
-  onLoadDemo: () => void;
 }) {
   if (loading) return <IncidentTableSkeleton />;
   if (incidents.length === 0) {
@@ -27,9 +24,8 @@ export function IncidentTable({
         </div>
         <h3 className="font-display text-xl font-semibold">No incidents in this view</h3>
         <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-          Filters may exclude retained incidents, or the correlation pipeline has not received a complete evidence chain yet.
+          Incidents appear here once the correlation pipeline receives a complete evidence chain. Adjust filters to review retained incidents.
         </p>
-        <Button className="mt-6" onClick={onLoadDemo}>Load synthetic evidence chain</Button>
       </Card>
     );
   }

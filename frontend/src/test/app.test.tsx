@@ -32,6 +32,20 @@ describe("incident dashboard", () => {
     expect(screen.getByText("critical")).toBeInTheDocument();
   });
 
+  it("renders a message-only empty incident state", async () => {
+    render(
+      <App
+        client={{ ...client, listIncidents: () => Promise.resolve([]) }}
+        realtimeConnector={noRealtime}
+      />,
+    );
+
+    expect(await screen.findByText(
+      "Incidents appear here once the correlation pipeline receives a complete evidence chain. Adjust filters to review retained incidents.",
+    )).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /evidence chain/i })).not.toBeInTheDocument();
+  });
+
   it("loads server-side action history when incident detail opens", async () => {
     const user = userEvent.setup();
     const listIncidentActions = vi.fn(() => Promise.resolve([pendingRecord]));
