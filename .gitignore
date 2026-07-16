@@ -26,3 +26,10 @@ docker-compose.override.yml
 CLAUDE.md
 AGENTS.md
 prompts/
+ml/data/raw/
+
+# Real lab data snapshots pulled by the scripts/ingest_*.py bridge scripts —
+# contain real internship identifiers (usernames, hostnames, MACs), never
+# for the public repo. See project confidentiality rule.
+ad_events.json
+pf_events.json
