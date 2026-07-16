@@ -12,18 +12,21 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.api.digests import router as digest_router
 from app.api.health import router as health_router
 from app.api.incidents import router as incident_router
 from app.api.realtime import IncidentConnectionManager
 from app.api.services import ApiServices
 from app.api.websocket import router as websocket_router
 from app.engines.analysis import create_analysis_engine_from_env
+from app.engines.digest import create_digest_narrative_engine_from_env
 from app.engines.response import ResponseEngine
 from app.observability.logging import configure_logging
 from app.observability.metrics import instrument_metrics
 from app.observability.tracing import instrument_tracing
 from app.stores.postgres import (
     PostgresApprovalStore,
+    PostgresDigestStore,
     PostgresEventStore,
     PostgresIncidentStore,
 )
@@ -57,6 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         response_engine=ResponseEngine(approval_store),
         analysis_engine_factory=create_analysis_engine_from_env,
         connections=IncidentConnectionManager(),
+        digests=PostgresDigestStore(database),
+        digest_narrative_engine_factory=create_digest_narrative_engine_from_env,
     )
     yield
     await redis.aclose()
@@ -94,6 +99,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     application.include_router(health_router)
+    application.include_router(digest_router)
     application.include_router(incident_router)
     application.include_router(websocket_router)
     instrument_metrics(application)

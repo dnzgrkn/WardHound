@@ -9,8 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from app.db.models import IncidentRecord, NormalizedEventRecord, ResponseActionAuditRecord
+from app.db.models import (
+    DailyDigestRecord,
+    IncidentRecord,
+    NormalizedEventRecord,
+    ResponseActionAuditRecord,
+)
 from app.schemas.analysis import RootCauseAnalysis
+from app.schemas.digest import DailyDigest
 from app.schemas.events import NormalizedEvent
 from app.schemas.incidents import Incident
 from app.schemas.response import ActionAuditRecord
@@ -128,6 +134,43 @@ class PostgresIncidentStore(_PostgresStore):
             if row is None or row.analysis is None:
                 return None
         return RootCauseAnalysis.model_validate(row.analysis)
+
+
+class PostgresDigestStore(_PostgresStore):
+    """Persist immutable generated daily digest records by UUID."""
+
+    async def append(self, digest: DailyDigest) -> None:
+        async with self._sessions() as session:
+            statement = insert(DailyDigestRecord).values(
+                id=digest.id,
+                payload=digest.model_dump(mode="json"),
+                generated_at=digest.generated_at,
+            )
+            statement = statement.on_conflict_do_update(
+                index_elements=[DailyDigestRecord.id],
+                set_={
+                    "payload": statement.excluded.payload,
+                    "generated_at": statement.excluded.generated_at,
+                },
+            )
+            await session.execute(statement)
+            await session.commit()
+
+    async def get(self, digest_id: UUID) -> DailyDigest | None:
+        async with self._sessions() as session:
+            row = await session.get(DailyDigestRecord, digest_id)
+        return DailyDigest.model_validate(row.payload) if row is not None else None
+
+    async def list_recent(self, limit: int) -> list[DailyDigest]:
+        if limit <= 0:
+            return []
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(DailyDigestRecord)
+                .order_by(DailyDigestRecord.generated_at.desc(), DailyDigestRecord.id.desc())
+                .limit(limit)
+            )
+        return [DailyDigest.model_validate(row.payload) for row in result.scalars()]
 
 
 class PostgresApprovalStore(_PostgresStore):

@@ -10,10 +10,12 @@ from fastapi import Depends
 from starlette.requests import HTTPConnection
 
 from app.api.realtime import IncidentConnectionManager
+from app.engines.digest import DigestNarrativeEngineFactory
 from app.engines.response import ResponseEngine
 from app.schemas.analysis import RootCauseAnalysis
 from app.schemas.events import NormalizedEvent
 from app.schemas.incidents import Incident
+from app.stores.digest import DigestStore
 from app.stores.incidents import EventStore, IncidentStore
 
 
@@ -39,6 +41,8 @@ class ApiServices:
     response_engine: ResponseEngine
     analysis_engine_factory: AnalysisEngineFactory
     connections: IncidentConnectionManager
+    digests: DigestStore
+    digest_narrative_engine_factory: DigestNarrativeEngineFactory | None
 
 
 def get_api_services(connection: HTTPConnection) -> ApiServices:
