@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,8 +12,10 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.realtime import IncidentConnectionManager
 from app.api.services import AnalysisEngine, ApiServices, get_api_services
+from app.engines.digest import DigestNarrativeGenerationError
 from app.engines.response import InMemoryApprovalStore, ResponseEngine
 from app.main import create_app
+from app.schemas.digest import AggregateStat, DigestNarrative
 from app.schemas.events import (
     EntityType,
     NormalizedEntity,
@@ -21,6 +24,7 @@ from app.schemas.events import (
     Severity,
     SourceSystem,
 )
+from app.schemas.incidents import Incident
 from app.stores.digest import InMemoryDigestStore
 from app.stores.incidents import InMemoryEventStore, InMemoryIncidentStore
 
@@ -30,6 +34,13 @@ HEADERS = {"X-API-Key": API_KEY}
 
 def unused_analysis_engine() -> AnalysisEngine:
     raise AssertionError("Incident analysis is not used by digest API tests")
+
+
+class FailingDigestNarrativeEngine:
+    async def narrate(
+        self, aggregate_stats: Sequence[AggregateStat], incidents: Sequence[Incident]
+    ) -> DigestNarrative:
+        raise DigestNarrativeGenerationError("Synthetic digest narrative failure")
 
 
 @pytest.fixture
@@ -114,3 +125,27 @@ async def test_generate_list_and_get_digest_history(
     assert detail.json()["id"] == first.json()["id"]
     assert missing.status_code == 404
     assert missing.json()["code"] == "digest_not_found"
+
+
+async def test_digest_narrative_generation_failure_returns_typed_502(
+    application: tuple[FastAPI, ApiServices],
+) -> None:
+    app, services = application
+    failing_services = ApiServices(
+        incidents=services.incidents,
+        events=services.events,
+        response_engine=services.response_engine,
+        analysis_engine_factory=services.analysis_engine_factory,
+        connections=services.connections,
+        digests=services.digests,
+        digest_narrative_engine_factory=FailingDigestNarrativeEngine,
+    )
+    app.dependency_overrides[get_api_services] = lambda: failing_services
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post("/api/v1/digests/generate", headers=HEADERS)
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "digest_narrative_generation_failed"
