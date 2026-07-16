@@ -31,6 +31,7 @@ from app.schemas.events import (
     SourceSystem,
 )
 from app.schemas.incidents import Incident
+from app.stores.digest import InMemoryDigestStore
 from app.stores.incidents import InMemoryEventStore, InMemoryIncidentStore
 
 API_KEY = "synthetic-dashboard-key"
@@ -70,6 +71,8 @@ def api_services() -> ApiServices:
         response_engine=ResponseEngine(InMemoryApprovalStore()),
         analysis_engine_factory=StaticAnalysisEngine,
         connections=IncidentConnectionManager(),
+        digests=InMemoryDigestStore(),
+        digest_narrative_engine_factory=None,
     )
 
 
@@ -197,6 +200,8 @@ async def test_concurrent_ingestion_requests_overlap_store_operations(
         response_engine=services.response_engine,
         analysis_engine_factory=services.analysis_engine_factory,
         connections=services.connections,
+        digests=services.digests,
+        digest_narrative_engine_factory=services.digest_narrative_engine_factory,
     )
     application.dependency_overrides[get_api_services] = lambda: services
     transport = ASGITransport(app=application)
@@ -266,6 +271,8 @@ def test_analysis_configuration_error_has_typed_response(
         response_engine=services.response_engine,
         analysis_engine_factory=unavailable_analysis_engine,
         connections=services.connections,
+        digests=services.digests,
+        digest_narrative_engine_factory=services.digest_narrative_engine_factory,
     )
     application.dependency_overrides[get_api_services] = lambda: services
 

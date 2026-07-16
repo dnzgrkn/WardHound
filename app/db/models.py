@@ -43,6 +43,19 @@ class IncidentRecord(Base):
     )
 
 
+class DailyDigestRecord(Base):
+    """Durable daily digest stored as its canonical Pydantic JSON payload."""
+
+    __tablename__ = "daily_digests"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    stored_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ResponseActionAuditRecord(Base):
     """Append-only response action lifecycle snapshot."""
 

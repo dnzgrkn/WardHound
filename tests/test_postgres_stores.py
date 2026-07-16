@@ -16,9 +16,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.db.models import IncidentRecord, NormalizedEventRecord, ResponseActionAuditRecord
+from app.db.models import (
+    DailyDigestRecord,
+    IncidentRecord,
+    NormalizedEventRecord,
+    ResponseActionAuditRecord,
+)
 from app.engines.response import ApprovalStore
 from app.schemas.analysis import Evidence, RecommendedAction, ResponseActionType, RootCauseAnalysis
+from app.schemas.digest import AggregateStat, DailyDigest
 from app.schemas.events import (
     EntityType,
     NormalizedEntity,
@@ -29,9 +35,11 @@ from app.schemas.events import (
 )
 from app.schemas.incidents import Incident
 from app.schemas.response import ActionAuditRecord, ApprovalStatus
+from app.stores.digest import DigestStore
 from app.stores.incidents import EventStore, IncidentStore
 from app.stores.postgres import (
     PostgresApprovalStore,
+    PostgresDigestStore,
     PostgresEventStore,
     PostgresIncidentStore,
 )
@@ -107,18 +115,30 @@ async def test_records_survive_fresh_repository_instances(
         incident_id=incident.id,
         approval_status=ApprovalStatus.PENDING,
     )
+    digest = DailyDigest(
+        period_start=start - timedelta(days=1),
+        period_end=start,
+        generated_at=start + timedelta(hours=1),
+        incidents=[incident],
+        aggregate_stats=[
+            AggregateStat(name="incidents_by_severity", label="high", count=1)
+        ],
+    )
 
     event_store: EventStore = PostgresEventStore(postgres_engine)
     incident_store: IncidentStore = PostgresIncidentStore(postgres_engine)
     approval_store: ApprovalStore = PostgresApprovalStore(postgres_engine)
+    digest_store: DigestStore = PostgresDigestStore(postgres_engine)
     await event_store.add_all([first_event, second_event])
     assert await incident_store.upsert(incident) is True
     await incident_store.save_analysis(incident.id, analysis)
     await approval_store.append(action)
+    await digest_store.append(digest)
 
     fresh_events: EventStore = PostgresEventStore(postgres_engine)
     fresh_incidents: IncidentStore = PostgresIncidentStore(postgres_engine)
     fresh_approvals: ApprovalStore = PostgresApprovalStore(postgres_engine)
+    fresh_digests: DigestStore = PostgresDigestStore(postgres_engine)
 
     assert await fresh_events.get_many([second_event.id, first_event.id]) == [
         second_event,
@@ -133,9 +153,14 @@ async def test_records_survive_fresh_repository_instances(
     assert await fresh_approvals.get(action.id) == action
     assert await fresh_approvals.history(action.id) == (action,)
     assert await fresh_approvals.list_for_incident(incident.id) == [action]
+    assert await fresh_digests.get(digest.id) == digest
+    assert digest in await fresh_digests.list_recent(10)
 
     async def clean_up() -> None:
         async with postgres_engine.begin() as connection:
+            await connection.execute(
+                delete(DailyDigestRecord).where(DailyDigestRecord.id == digest.id)
+            )
             await connection.execute(
                 delete(ResponseActionAuditRecord).where(
                     ResponseActionAuditRecord.record_id == action.id
