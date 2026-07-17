@@ -67,6 +67,7 @@ def application(monkeypatch: pytest.MonkeyPatch) -> tuple[FastAPI, ApiServices]:
         ("POST", "/api/v1/digests/generate"),
         ("GET", "/api/v1/digests"),
         ("GET", f"/api/v1/digests/{uuid4()}"),
+        ("GET", f"/api/v1/digests/{uuid4()}/pdf"),
     ],
 )
 async def test_digest_routes_require_static_api_key(
@@ -108,6 +109,10 @@ async def test_generate_list_and_get_digest_history(
             f"/api/v1/digests/{first.json()['id']}", headers=HEADERS
         )
         missing = await client.get(f"/api/v1/digests/{uuid4()}", headers=HEADERS)
+        pdf = await client.get(
+            f"/api/v1/digests/{first.json()['id']}/pdf", headers=HEADERS
+        )
+        missing_pdf = await client.get(f"/api/v1/digests/{uuid4()}/pdf", headers=HEADERS)
 
     assert first.status_code == 201
     assert second.status_code == 201
@@ -125,6 +130,11 @@ async def test_generate_list_and_get_digest_history(
     assert detail.json()["id"] == first.json()["id"]
     assert missing.status_code == 404
     assert missing.json()["code"] == "digest_not_found"
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF-")
+    assert missing_pdf.status_code == 404
+    assert missing_pdf.json()["code"] == "digest_not_found"
 
 
 async def test_digest_narrative_generation_failure_returns_typed_502(

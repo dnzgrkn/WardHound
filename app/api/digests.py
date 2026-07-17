@@ -7,11 +7,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.api.auth import require_api_key
 from app.api.models import ApiError
 from app.api.services import ApiServicesDependency
+from app.digest_pdf import render_digest_pdf
 from app.engines.digest import DigestBuilder, DigestNarrativeGenerationError
 from app.schemas.digest import DailyDigest
 
@@ -71,6 +72,30 @@ async def get_digest(
     if digest is None:
         return _error(status.HTTP_404_NOT_FOUND, "digest_not_found", "Digest was not found")
     return digest
+
+
+@router.get(
+    "/{digest_id}/pdf",
+    response_model=None,
+    response_class=Response,
+    dependencies=[Depends(require_api_key)],
+    responses={
+        status.HTTP_200_OK: {"content": {"application/pdf": {}}},
+        status.HTTP_404_NOT_FOUND: {"model": ApiError},
+    },
+)
+async def get_digest_pdf(
+    digest_id: UUID, services: ApiServicesDependency
+) -> Response | JSONResponse:
+    """Render one retained digest as a compact PDF report."""
+    digest = await services.digests.get(digest_id)
+    if digest is None:
+        return _error(status.HTTP_404_NOT_FOUND, "digest_not_found", "Digest was not found")
+    return Response(
+        content=render_digest_pdf(digest),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="daily-digest-{digest.id}.pdf"'},
+    )
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
