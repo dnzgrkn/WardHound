@@ -92,7 +92,34 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env, see .env.example}
       REDIS_URL: ${REDIS_URL:?set REDIS_URL in .env, see .env.example}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL in .env, see .env.example}
-    command: ["/bin/sh", "-c", "celery --broker=\"$$CELERY_BROKER_URL\" worker --loglevel=info"]
+      WARDHOUND_API_URL: ${WARDHOUND_API_URL:-http://api:8000}
+      WARDHOUND_API_KEY: ${WARDHOUND_API_KEY:?set WARDHOUND_API_KEY in .env, see .env.example}
+      JUMPSERVER_BASE_URL: ${JUMPSERVER_BASE_URL:-}
+      JUMPSERVER_ACCESS_KEY_ID: ${JUMPSERVER_ACCESS_KEY_ID:-}
+      JUMPSERVER_ACCESS_KEY_SECRET: ${JUMPSERVER_ACCESS_KEY_SECRET:-}
+      JUMPSERVER_POLL_INTERVAL_SECONDS: ${JUMPSERVER_POLL_INTERVAL_SECONDS:-300}
+      JUMPSERVER_INITIAL_LOOKBACK_SECONDS: ${JUMPSERVER_INITIAL_LOOKBACK_SECONDS:-300}
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build: .
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env, see .env.example}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in .env, see .env.example}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:?set CELERY_BROKER_URL in .env, see .env.example}
+      WARDHOUND_API_URL: ${WARDHOUND_API_URL:-http://api:8000}
+      WARDHOUND_API_KEY: ${WARDHOUND_API_KEY:?set WARDHOUND_API_KEY in .env, see .env.example}
+      JUMPSERVER_BASE_URL: ${JUMPSERVER_BASE_URL:-}
+      JUMPSERVER_ACCESS_KEY_ID: ${JUMPSERVER_ACCESS_KEY_ID:-}
+      JUMPSERVER_ACCESS_KEY_SECRET: ${JUMPSERVER_ACCESS_KEY_SECRET:-}
+      JUMPSERVER_POLL_INTERVAL_SECONDS: ${JUMPSERVER_POLL_INTERVAL_SECONDS:-300}
+      JUMPSERVER_INITIAL_LOOKBACK_SECONDS: ${JUMPSERVER_INITIAL_LOOKBACK_SECONDS:-300}
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
     depends_on:
       postgres:
         condition: service_healthy

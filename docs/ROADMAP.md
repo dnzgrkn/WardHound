@@ -96,6 +96,12 @@ Bu süreçte üç gerçek API-şekli uyumsuzluğu bulundu ve sadece bridge scrip
 
 Bridge script'ler bilinçli olarak `app/`'ın dışında tutuldu — zamanlanmış, sürekli çalışan bir collector transport'u değil, tek seferlik operatör aracı. Gerçek staj verisi (hostname/kullanıcı adı/MAC) hiçbir committed script metnine hardcoded girmedi.
 
+## Aşama 20 — JumpServer Sürekli Polling ✅ tamamlandı
+
+Compose'ta baştan beri boşta duran Celery worker artık gerçek bir uygulama modülü ve kayıtlı bir görev yüklüyor; ayrı Celery beat servisi JumpServer audit kaynaklarını varsayılan olarak beş dakikada bir tarıyor. Üç AccessKey sinyalinden herhangi biri boşsa görev HTTP/Redis client oluşturmadan açık bir skip log'u yazıyor, yani sıfır-konfigürasyon demo hiçbir dış ağ çağrısı yapmıyor. ADR 0021'de canlı ortamda bulunan array/pagination, session tarih formatı ve display-name username uyumsuzlukları `app/collectors/jumpserver_live.py` altında tek üretim adaptörüne taşındı; eski operatör script'i artık bu kodun ince bir wrapper'ı.
+
+Tekrarlı polling'in duplicate event/incident riski Redis'teki `wardhound:collectors:jumpserver:last_successful_poll` UTC watermark'ıyla çözüldü. Her görev ağ çağrısından önce cutoff'u sabitliyor, yalnızca önceki başarılı cutoff'tan sonrasını çekiyor ve watermark'ı ancak gerçek `POST /api/v1/events` çağrısı başarıyla tamamlanınca ilerletiyor; başarısız ingestion aynı pencerenin tekrar denenmesini sağlıyor. Sync Celery task içindeki tek, sınırlı `asyncio.run()` task'ın kendi event loop'unu yönetiyor — FastAPI'nin ortak request loop'unu thread+nested-loop shim'iyle bloke eden Aşama 9 hatası değil. PacketFence syslog/REST erişimi ve AD WinRM/WEF erişimi bu lab'da hazır olmadığı için iki transport da bilinçli olarak sonraya bırakıldı. Detaylar: `docs/adr/0022-jumpserver-continuous-polling.md`.
+
 ## SOAR entegrasyon durumu — özet
 
 Sekiz response action'ın hepsi artık ya gerçek (beşi: PacketFence, Active Directory, Cisco FMC, JumpServer, Duo — hedef sistemin riskine uygun çoklu-sinyal gate + insan onayı + sonuç doğrulamasıyla), ya düşük riskli gerçek webhook (ikisi: notify, create-ticket), ya da zaten-gerçek bir işlemin doğru etiketlenmiş hali (biri: manual approval). Üç gerçek hata bu süreçte bulunup düzeltildi — hepsi agent'ın kendi testleri geçtikten SONRA, kaynak kodu/gerçek API dokümantasyonunu bağımsızca okuyarak yakalandı: PacketFence'te yanlış endpoint (isolation yerine deregistration), JumpServer'da yanlış endpoint hipotezi (prompt aşamasında düzeltildi), Postgres store'da event-loop blokajı (Aşama 9).
