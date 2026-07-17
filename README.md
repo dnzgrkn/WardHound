@@ -4,7 +4,7 @@
 
 WardHound is a security event correlation, root-cause analysis, and response-orchestration MVP for operators working across NAC, PAM, Active Directory, and firewall infrastructure. It turns normalized signals from otherwise separate controls into explainable incidents, deterministic risk scores, and reviewable response requests.
 
-> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. Collector transports are not continuously scheduled. Seven external response handlers are simulated by default and become real only when every integration-specific configuration signal and separate real-execution flag are set. The manual-approval handler is different: it reports the real, already-persisted approval identity and timestamp and has no external integration to enable. FMC membership changes remain pending until an operator deploys them to managed devices.
+> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. JumpServer polling is continuously scheduled only when its three AccessKey settings are present; PacketFence and Active Directory transports are not yet continuously scheduled. Seven external response handlers are simulated by default and become real only when every integration-specific configuration signal and separate real-execution flag are set. The manual-approval handler is different: it reports the real, already-persisted approval identity and timestamp and has no external integration to enable. FMC membership changes remain pending until an operator deploys them to managed devices.
 
 The deliberate split is simple: rules decide what correlates and how risk is scored; AI explains the retained evidence but cannot emit arbitrary commands; a human must approve security-state changes; external mutation is disabled unless its integration-specific safety gate is explicitly satisfied.
 
@@ -13,7 +13,7 @@ The deliberate split is simple: rules decide what correlates and how risk is sco
 ```mermaid
 flowchart LR
     Sources["NAC / PAM / AD / firewall events"]
-    Collectors["Collectors<br/>tested parsing + normalization logic<br/>transport scheduling not wired"]
+    Collectors["Collectors<br/>tested parsing + normalization logic<br/>scheduled JumpServer polling"]
     Normalize["NormalizedEvent contract"]
     Engines["Correlation → policy → risk<br/>deterministic engines"]
     Store["Event + incident + analysis stores<br/>IN-MEMORY / lost on restart"]
