@@ -108,6 +108,28 @@ Celery beat artık JumpServer polling'in yanında ikinci bir görevi varsayılan
 
 Teslimat ADR 0016'nın iki-sinyalli webhook disiplinini aynen izliyor: hem `DIGEST_DELIVERY_WEBHOOK_URL` hem `DIGEST_DELIVERY_REAL_EXECUTION=true` yoksa digest yine üretilip saklanıyor fakat hiçbir outbound çağrı yapılmıyor. Gerçek payload PDF binary veya ham event/entity taşımıyor; yalnızca digest ID, zaman aralığı, bounded executive summary, üst seviye incident sayıları ve credential içermeyen PDF/API referansı gönderiyor. Webhook başarısızlığı saklanmış digest'i geçersiz saymıyor. Detaylar: `docs/adr/0023-digest-scheduling-and-delivery.md`.
 
+## Aşama 22 — PacketFence Sürekli Polling (JumpServer Ops Job) ✅ tamamlandı
+
+PacketFence karantina durumu artık doğrudan REST veya ham SSH credential ile değil, JumpServer'ın
+denetlenen Ops Job API'si üzerinden varsayılan beş dakikada bir okunuyor. WardHound AccessKey ile
+JumpServer'daki yönetilen asset'i exact-name eşleşmesiyle çözüyor, instant `shell` job içinde yalnızca
+`pfcmd node view category="Quarantine"` çalıştırıyor, bounded şekilde tamamlanmasını bekliyor ve ANSI/
+Ansible/Celery çerçevesinden temizlediği pipe-delimited stdout'u parse ediyor. Böylece komut yürütme
+JumpServer'ın PAM audit, command logging ve session kayıt sınırını terk etmiyor; doğrudan PacketFence
+credential veya SSH key eklenmiyor. Beş sinyalden (`JUMPSERVER_BASE_URL`, AccessKey çifti, asset adı,
+run-as hesabı) biri bile boşsa Redis/HTTP client kurulmadan açık bir skip log'u yazılıyor.
+
+Duplicate kontrolü Redis'teki `wardhound:collectors:packetfence:known_quarantine` MAC set snapshot'ıyla
+yapılıyor. Yalnızca mevcut quarantine setinde olup son başarılı snapshot'ta olmayan MAC'ler unmodified
+`PacketFenceCollector.process()` üzerinden normalize edilip `/api/v1/events`'e gönderiliyor; `pfcmd`
+record'undaki `pid`, ADR 0021 bridge'indeki aynı `model_copy()` tekniğiyle related username oluyor.
+Snapshot ancak POST başarılı olduktan sonra (veya yeni event yoksa) tamamen değiştiriliyor: ingestion
+hatası aynı MAC'i retry eder, quarantine'den çıkan MAC setten silinir ve daha sonra geri girerse yeniden
+alert üretir. AD için aynı Ops yolu denendi fakat PAM VLAN → server VLAN WinRM trafiği cross-VLAN network
+policy tarafından engellendi; gerekli firewall ACL değişikliği bu çalışmanın dışında olduğundan AD
+otomasyonu unutulmadı, ayrı bir sonraki aşamaya bilinçli olarak bırakıldı. Detaylar:
+`docs/adr/0024-packetfence-continuous-polling.md`.
+
 ## SOAR entegrasyon durumu — özet
 
 Sekiz response action'ın hepsi artık ya gerçek (beşi: PacketFence, Active Directory, Cisco FMC, JumpServer, Duo — hedef sistemin riskine uygun çoklu-sinyal gate + insan onayı + sonuç doğrulamasıyla), ya düşük riskli gerçek webhook (ikisi: notify, create-ticket), ya da zaten-gerçek bir işlemin doğru etiketlenmiş hali (biri: manual approval). Üç gerçek hata bu süreçte bulunup düzeltildi — hepsi agent'ın kendi testleri geçtikten SONRA, kaynak kodu/gerçek API dokümantasyonunu bağımsızca okuyarak yakalandı: PacketFence'te yanlış endpoint (isolation yerine deregistration), JumpServer'da yanlış endpoint hipotezi (prompt aşamasında düzeltildi), Postgres store'da event-loop blokajı (Aşama 9).
