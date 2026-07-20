@@ -130,6 +130,24 @@ policy tarafından engellendi; gerekli firewall ACL değişikliği bu çalışma
 otomasyonu unutulmadı, ayrı bir sonraki aşamaya bilinçli olarak bırakıldı. Detaylar:
 `docs/adr/0024-packetfence-continuous-polling.md`.
 
+## Aşama 23 — Active Directory Sürekli Polling (kod tamamlandı, canlı doğrulama bekliyor)
+
+Event ID 4625 sorgusu artık JumpServer'ın denetlenen Ops Job API'si üzerinden zamanlanabilir durumda.
+Görev yalnızca beş konfigürasyon sinyali doluyken `win_shell` çalıştırıyor; ADR 0021'de gerçek Security
+log verisine karşı doğrulanmış `Get-WinEvent` ve XML alan çıkarımını değiştirmeden kullanıyor, çıktıyı
+mevcut `ActiveDirectoryCollector.process()` yolundan geçiriyor ve başarılı kapalı zaman pencerelerini
+Redis watermark ile takip ediyor. Ingestion hatası watermark'ı ilerletmiyor; eksik konfigürasyon Redis
+ve HTTP client kurulmadan temiz bir skip üretiyor. Asset adı ve run-as hesabı ortam değişkenidir,
+doğrudan AD/LDAP credential değildir.
+
+Bu aşama **canlı uçtan uca doğrulanmış değildir**. Windows asset'e `winrm` protokolü eklenince
+`win_shell` module-suitability kontrolü geçti, ancak gerçek domain controller'dan stdout üreten başarılı
+bir komut gözlenmedi. Muhtemel neden PAM VLAN ile server VLAN arasındaki, ADR 0024'ün de işaret ettiği
+bekleyen pfSense WinRM ACL değişikliğidir; internship lab erişimi bu değişiklik doğrulanmadan sona erdi.
+Durumun “doğrulandı” olabilmesi için yetkili ortamda başarılı bir canlı poll'un gerçek 4625 JSON çıktısı
+ve WardHound ingestion sonucu ADR 0021'deki yöntemle gözlenip kaydedilmelidir. Detaylar:
+`docs/adr/0025-ad-continuous-polling.md`.
+
 ## SOAR entegrasyon durumu — özet
 
 Sekiz response action'ın hepsi artık ya gerçek (beşi: PacketFence, Active Directory, Cisco FMC, JumpServer, Duo — hedef sistemin riskine uygun çoklu-sinyal gate + insan onayı + sonuç doğrulamasıyla), ya düşük riskli gerçek webhook (ikisi: notify, create-ticket), ya da zaten-gerçek bir işlemin doğru etiketlenmiş hali (biri: manual approval). Üç gerçek hata bu süreçte bulunup düzeltildi — hepsi agent'ın kendi testleri geçtikten SONRA, kaynak kodu/gerçek API dokümantasyonunu bağımsızca okuyarak yakalandı: PacketFence'te yanlış endpoint (isolation yerine deregistration), JumpServer'da yanlış endpoint hipotezi (prompt aşamasında düzeltildi), Postgres store'da event-loop blokajı (Aşama 9).
