@@ -11,9 +11,9 @@
 ![Auth0](https://img.shields.io/badge/Identity-Auth0-eb5424)
 ![Status](https://img.shields.io/badge/Status-Active%20development-brightgreen)
 
-WardHound is a security event correlation, root-cause analysis, and response-orchestration platform for operators working across NAC, PAM, Active Directory, and firewall infrastructure. It turns normalized signals from otherwise separate controls into explainable incidents, deterministic risk scores, and reviewable response requests — and, since its most recent stages, keeps that evidence current on its own: JumpServer and PacketFence are polled continuously through audited PAM-brokered automation, and a scheduled Daily Security Digest turns the underlying activity into an operator-facing report with PDF export and gated delivery.
+WardHound is a security event correlation, root-cause analysis, and response-orchestration platform for operators working across NAC, PAM, Active Directory, and firewall infrastructure. It turns normalized signals from otherwise separate controls into explainable incidents, deterministic risk scores, and reviewable response requests — and, since its most recent stages, keeps that evidence current on its own: JumpServer and PacketFence are polled continuously through audited PAM-brokered automation, an implemented but live-unconfirmed AD transport follows the same boundary, and a scheduled Daily Security Digest turns the underlying activity into an operator-facing report with PDF export and gated delivery.
 
-> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats and have been run end-to-end against three real, concurrently live systems; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. JumpServer session/audit polling and PacketFence quarantine polling are both continuously scheduled once their respective configuration signals are present — PacketFence's transport runs entirely through JumpServer's own audited Ops Job API, never a direct PacketFence credential. Active Directory transport remains manual, blocked on a pending cross-VLAN network ACL change outside this project's control, not forgotten. Seven external response handlers are simulated by default and become real only when every integration-specific configuration signal and separate real-execution flag are set. The manual-approval handler is different: it reports the real, already-persisted approval identity and timestamp and has no external integration to enable. FMC membership changes remain pending until an operator deploys them to managed devices.
+> **What this is—and is not:** the deterministic correlation, policy, and risk engines are implemented; collector parsing and normalization are tested against sanitized real-world formats and have been run end-to-end against three real, concurrently live systems; AI analysis is on-demand, typed, and evidence-cited; the React dashboard, REST/WebSocket API, and Prometheus/Grafana/Jaeger observability stack run together. This is not yet a production deployment. JumpServer session/audit polling and PacketFence quarantine polling are both continuously scheduled once their respective configuration signals are present — PacketFence's transport runs entirely through JumpServer's own audited Ops Job API, never a direct PacketFence credential. The equivalent gated Active Directory task is implemented, but successful live delivery through `win_shell` was never observed before lab access ended; the suspected blocker remains the pending cross-VLAN WinRM ACL. Seven external response handlers are simulated by default and become real only when every integration-specific configuration signal and separate real-execution flag is set. The manual-approval handler is different: it reports the real, already-persisted approval identity and timestamp and has no external integration to enable. FMC membership changes remain pending until an operator deploys them to managed devices.
 
 The deliberate split is simple: rules decide what correlates and how risk is scored; AI explains the retained evidence but cannot emit arbitrary commands; a human must approve security-state changes; external mutation is disabled unless its integration-specific safety gate is explicitly satisfied.
 
@@ -22,7 +22,7 @@ The deliberate split is simple: rules decide what correlates and how risk is sco
 ```mermaid
 flowchart LR
     Sources["NAC / PAM / AD / firewall events"]
-    Scheduler[("Celery worker + beat<br/>JumpServer poll · PacketFence poll (via JumpServer Ops) · daily digest")]
+    Scheduler[("Celery worker + beat<br/>JumpServer poll · PacketFence/AD poll (via JumpServer Ops) · daily digest")]
     Collectors["Collectors<br/>tested parsing + normalization logic<br/>unmodified by continuous transports"]
     Normalize["NormalizedEvent contract"]
     Engines["Correlation → policy → risk<br/>deterministic engines"]
@@ -51,7 +51,7 @@ flowchart LR
     class Response simulated;
 ```
 
-Legend: red is safety-gated response behavior that stays simulated until explicit real-execution configuration; green is durable PostgreSQL-backed state. Every scheduled task (JumpServer polling, PacketFence polling, daily digest generation) is itself gated — absent configuration, it logs a skip and makes zero network calls, matching the demo's zero-config behavior exactly.
+Legend: red is safety-gated response behavior that stays simulated until explicit real-execution configuration; green is durable PostgreSQL-backed state. Every scheduled collector task (JumpServer, PacketFence, and AD polling) is itself gated — absent configuration, it logs a skip and makes zero network calls, matching the demo's zero-config behavior exactly. Digest generation is scheduled independently.
 
 ## Run the demo
 
@@ -75,12 +75,11 @@ This is a **local-config demo**, not a literal no-configuration startup: Compose
 
 ### Continuous collector transports
 
-A separate Celery `worker` and `beat` service run alongside the API. Two collector transports are continuously scheduled, each gated independently and each making zero network calls with no configuration:
+A separate Celery `worker` and `beat` service run alongside the API. Three collector transports are continuously scheduled, each gated independently and each making zero network calls with no configuration:
 
 - **JumpServer** (`JUMPSERVER_POLL_INTERVAL_SECONDS`, default 300s): polls session and login-log history via JumpServer's AccessKey/HMAC REST API once `JUMPSERVER_BASE_URL`, `JUMPSERVER_ACCESS_KEY_ID`, and `JUMPSERVER_ACCESS_KEY_SECRET` are all set. A Redis-backed UTC watermark makes repeated polling idempotent; a failed cycle retries the same window instead of silently losing activity. See [ADR 0022](docs/adr/0022-jumpserver-continuous-polling.md).
 - **PacketFence** (`PACKETFENCE_POLL_INTERVAL_SECONDS`, default 300s): polls quarantine state once `PACKETFENCE_JUMPSERVER_ASSET_NAME` and `PACKETFENCE_JUMPSERVER_RUNAS` are set alongside the JumpServer AccessKey pair above. There is no direct PacketFence credential — the transport runs `pfcmd node view` through JumpServer's own audited Ops Job API, so every command stays inside JumpServer's PAM session/command audit trail. A Redis-backed quarantine snapshot makes repeated polling idempotent and correctly re-alerts if a device leaves and later re-enters quarantine. See [ADR 0024](docs/adr/0024-packetfence-continuous-polling.md).
-
-Active Directory transport remains a manual bridge script ([`scripts/ingest_ad_events.py`](scripts/ingest_ad_events.py)) rather than a scheduled task: the same JumpServer Ops automation was attempted for AD, but the PAM VLAN cannot currently reach the server VLAN over WinRM under the applicable cross-VLAN network policy. This is a pending firewall rule change outside the application's control, not a missing feature.
+- **Active Directory** (`AD_POLL_INTERVAL_SECONDS`, default 300s): the implemented task polls Event ID 4625 through JumpServer `win_shell` only when `AD_JUMPSERVER_ASSET_NAME` and `AD_JUMPSERVER_RUNAS` are set alongside the AccessKey pair. It reuses the independently validated Security-log XML extraction and a Redis UTC watermark; these asset identifiers are unrelated to the separate `AD_LDAP_*` disablement credentials. This transport is **implemented but not live-confirmed**: module compatibility was fixed, but no successful end-to-end output was observed before lab access ended, most likely because the pending cross-VLAN pfSense ACL still blocked WinRM. See [ADR 0025](docs/adr/0025-ad-continuous-polling.md), especially “Implemented, but live end-to-end delivery is unconfirmed.”
 
 ### Daily Security Digest
 
@@ -175,5 +174,6 @@ WardHound keeps deterministic security decisions separate from probabilistic exp
 - [ADR 0022](docs/adr/0022-jumpserver-continuous-polling.md) — continuously scheduled JumpServer polling with a Redis watermark and zero-config network gate.
 - [ADR 0023](docs/adr/0023-digest-scheduling-and-delivery.md) — daily digest scheduling, PDF export, and safety-gated webhook delivery.
 - [ADR 0024](docs/adr/0024-packetfence-continuous-polling.md) — continuously scheduled PacketFence polling through JumpServer's audited Ops Job API, with AD deliberately excluded pending a network ACL change.
+- [ADR 0025](docs/adr/0025-ad-continuous-polling.md) — implemented, gated Active Directory polling through JumpServer Ops, with live end-to-end validation explicitly pending the WinRM network path.
 
 See the [product specification](docs/SPEC.md), [roadmap](docs/ROADMAP.md), and [threat model](docs/THREAT_MODEL.md) for the wider design and explicitly deferred production work.
